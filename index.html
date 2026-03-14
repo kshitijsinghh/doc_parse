@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DocParse — PDF Data Extractor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'DM Sans', sans-serif; background: #f8fafc; color: #1e293b; min-height: 100vh; }
+
+    header { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 14px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 3px rgba(0,0,0,0.05); position: sticky; top: 0; z-index: 10; }
+    .logo { display: flex; align-items: center; gap: 10px; }
+    .logo-icon { width: 36px; height: 36px; background: #2563eb; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+    .logo-name { font-family: 'Playfair Display', serif; font-weight: 800; font-size: 18px; color: #0f172a; letter-spacing: -0.02em; }
+    .logo-sub { font-size: 10px; color: #94a3b8; letter-spacing: 0.1em; text-transform: uppercase; }
+    .mode-badge { font-size: 11px; font-weight: 600; padding: 5px 14px; border-radius: 20px; border: 1px solid; display: none; }
+    .mode-badge.regex { background: #f0fdf4; color: #16a34a; border-color: #bbf7d0; }
+    .mode-badge.llm   { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+
+    main { max-width: 780px; margin: 0 auto; padding: 48px 24px; }
+
+    .hero { text-align: center; margin-bottom: 48px; }
+    .hero h1 { font-family: 'Playfair Display', serif; font-size: 40px; font-weight: 800; color: #0f172a; line-height: 1.15; letter-spacing: -0.03em; margin-bottom: 14px; }
+    .hero h1 span { color: #2563eb; }
+    .hero p { color: #64748b; font-size: 16px; max-width: 480px; margin: 0 auto; line-height: 1.6; }
+
+    /* Steps */
+    .steps { display: flex; align-items: center; justify-content: center; margin-bottom: 32px; flex-wrap: nowrap; gap: 2px; overflow: hidden; }
+    .step { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; transition: all 0.3s; background: #f1f5f9; color: #94a3b8; white-space: nowrap; }
+    .step.active { background: #2563eb; color: #fff; }
+    .step.done { background: #e2e8f0; color: #475569; }
+    .step-num { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; background: #cbd5e1; color: #64748b; flex-shrink: 0; }
+    .step.active .step-num { background: #fff; color: #2563eb; }
+    .step-line { width: 16px; min-width: 16px; height: 2px; background: #e2e8f0; flex-shrink: 0; }
+    .step-line.done { background: #cbd5e1; }
+
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 36px; box-shadow: 0 1px 8px rgba(0,0,0,0.06); }
+
+    .error-banner { background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 11px 16px; margin-bottom: 20px; font-size: 13px; color: #dc2626; display: none; }
+
+    /* Upload */
+    .upload-area { width: 100%; border: 2px dashed #cbd5e1; border-radius: 16px; padding: 60px 24px; display: flex; flex-direction: column; align-items: center; gap: 12px; cursor: pointer; background: #f8fafc; transition: all 0.2s; text-align: center; }
+    .upload-area:hover, .upload-area.drag { border-color: #2563eb; background: #eff6ff; }
+    .upload-area .icon { font-size: 48px; }
+    .upload-area h3 { color: #334155; font-weight: 600; font-size: 15px; }
+    .upload-area p { color: #94a3b8; font-size: 12px; }
+    #file-input { display: none; }
+
+    /* Template question */
+    .template-question { margin-top: 28px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 20px 24px; }
+    .template-question h3 { font-size: 14px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+    .template-question p { font-size: 12px; color: #64748b; margin-bottom: 16px; line-height: 1.5; }
+    .template-options { display: flex; gap: 12px; }
+    .template-option { flex: 1; padding: 14px 16px; border-radius: 12px; border: 2px solid #e2e8f0; background: #fff; cursor: pointer; transition: all 0.2s; text-align: left; }
+    .template-option:hover { border-color: #93c5fd; background: #eff6ff; }
+    .template-option.selected { border-color: #2563eb; background: #eff6ff; }
+    .template-option .opt-icon { font-size: 22px; margin-bottom: 6px; }
+    .template-option .opt-title { font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 3px; }
+    .template-option .opt-desc { font-size: 11px; color: #64748b; line-height: 1.4; }
+    .template-option .opt-tag { display: inline-block; margin-top: 6px; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+    .opt-tag.fast { background: #f0fdf4; color: #16a34a; }
+    .opt-tag.smart { background: #eff6ff; color: #2563eb; }
+
+    /* File list + preview */
+    .file-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; width: 210px; flex-shrink: 0; }
+    .file-item { text-align: left; padding: 9px 12px; border-radius: 8px; font-size: 12px; font-weight: 500; border: 1.5px solid #e2e8f0; background: #fff; color: #64748b; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: all 0.15s; }
+    .file-item.selected { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
+    .preview-panel { flex: 1; background: #fff; border-radius: 12px; padding: 20px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; justify-content: space-between; min-height: 200px; }
+    .preview-label { font-size: 10px; color: #94a3b8; margin-bottom: 6px; letter-spacing: 0.1em; text-transform: uppercase; }
+    .preview-hint { margin-top: 14px; padding: 10px 14px; border-radius: 8px; border: 1px solid; font-size: 12px; }
+    .preview-hint.llm   { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+
+    /* Buttons */
+    .btn { padding: 11px 20px; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-weight: 700; font-size: 13px; border: none; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+    .btn-primary { background: #2563eb; color: #fff; width: 100%; }
+    .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+    .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+    .btn-secondary { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+    .btn-secondary:hover { background: #e2e8f0; }
+
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Fields */
+    .fields-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-height: 280px; overflow-y: auto; padding-right: 4px; }
+    .field-card { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1.5px solid #e2e8f0; background: #fff; cursor: pointer; transition: all 0.15s; }
+    .field-card.checked { border-color: #93c5fd; background: #eff6ff; }
+    .field-card input { margin-top: 2px; accent-color: #2563eb; flex-shrink: 0; }
+    .field-key { color: #0f172a; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .field-val { color: #94a3b8; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Extraction info bar */
+    .info-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 10px; font-size: 12px; margin-bottom: 16px; }
+    .info-bar.regex { background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; }
+    .info-bar.llm   { background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; }
+
+    /* Progress */
+    .progress-list { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 14px; }
+    .progress-item { display: flex; align-items: center; gap: 12px; }
+    .progress-dot { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: #e2e8f0; color: #94a3b8; }
+    .progress-dot.processing { background: #2563eb; color: #fff; }
+    .progress-dot.done { background: #10b981; color: #fff; }
+    .progress-bar-wrap { height: 6px; background: #f1f5f9; border-radius: 999px; overflow: hidden; margin-top: 5px; }
+    .progress-bar { height: 100%; border-radius: 999px; width: 0%; transition: width 0.5s ease; background: #3b82f6; }
+    .progress-bar.done { width: 100%; background: #10b981; }
+    .progress-bar.processing { width: 60%; }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+    table { width: 100%; font-size: 12px; border-collapse: collapse; }
+    thead tr { background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
+    th { text-align: left; padding: 10px 14px; color: #64748b; font-weight: 600; white-space: nowrap; }
+    tbody tr { border-bottom: 1px solid #f1f5f9; }
+    tbody tr:nth-child(even) { background: #fafafa; }
+    td { padding: 9px 14px; color: #0f172a; white-space: nowrap; }
+    td.na { color: #cbd5e1; }
+    td.filename { color: #94a3b8; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+
+    .row { display: flex; gap: 16px; }
+    .center { display: flex; flex-direction: column; align-items: center; }
+    .text-center { text-align: center; }
+    .select-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .select-count { font-size: 12px; color: #64748b; }
+    .select-all-btn { font-size: 12px; color: #2563eb; background: none; border: none; cursor: pointer; font-weight: 600; font-family: 'DM Sans', sans-serif; }
+    .custom-field-row { display: flex; gap: 8px; margin-top: 12px; }
+    .custom-input { flex: 1; padding: 9px 12px; border: 1.5px solid #e2e8f0; border-radius: 8px; font-size: 13px; color: #0f172a; outline: none; font-family: 'DM Sans', sans-serif; }
+    .custom-input:focus { border-color: #93c5fd; }
+    .hidden { display: none !important; }
+    .footer { display: none; }
+    .mb-20 { margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚖</div>
+    <div>
+      <div class="logo-name">DocParse</div>
+      <div class="logo-sub">For CA & Law Firms</div>
+    </div>
+  </div>
+  <div class="mode-badge hidden" id="mode-badge"></div>
+</header>
+
+<main>
+  <div class="hero" id="hero">
+    <h1>Extract Structured Data<br /><span>from PDF Files in Bulk</span></h1>
+    <p>Upload bulk PDFs, preview & select the fields you need — get a clean CSV in seconds.</p>
+  </div>
+
+  <div class="error-banner" id="error-banner"></div>
+
+  <!-- Step indicator -->
+  <div class="steps" id="steps">
+    <div class="step active" id="step-upload"><span class="step-num">1</span> Upload PDFs</div>
+    <div class="step-line" id="line-1"></div>
+    <div class="step" id="step-preview"><span class="step-num">2</span> Preview Document</div>
+    <div class="step-line" id="line-2"></div>
+    <div class="step" id="step-select"><span class="step-num">3</span> Select Fields</div>
+    <div class="step-line" id="line-3"></div>
+    <div class="step" id="step-extract"><span class="step-num">4</span> Extracting</div>
+    <div class="step-line" id="line-4"></div>
+    <div class="step" id="step-download"><span class="step-num">5</span> Download CSV</div>
+  </div>
+
+  <div class="card" id="card">
+
+    <!-- ── STEP 1: Upload + Template Question ── -->
+    <div id="view-upload">
+      <div class="center">
+        <div class="text-center mb-20" style="max-width:500px">
+          <h2 style="font-size:22px;font-weight:700;color:#0f172a;margin-bottom:8px">Upload Your PDFs</h2>
+          <p style="color:#64748b;font-size:14px">Drop all your PDFs at once. We'll preview one and extract fields from all of them.</p>
+        </div>
+
+        <div class="upload-area" id="upload-area" style="max-width:520px">
+          <div class="icon">📂</div>
+          <h3>Drop PDFs here or click to browse</h3>
+          <p>Multiple files supported · PDF only</p>
+          <input type="file" id="file-input" multiple accept=".pdf" />
+        </div>
+
+        <!-- Template question — shown after files selected -->
+        <div class="template-question hidden" id="template-question" style="max-width:520px;width:100%">
+          <h3>📋 Do all your PDFs have the same template?</h3>
+          <p>This helps us choose the fastest and most accurate extraction method for your documents.</p>
+          <div class="template-options">
+            <div class="template-option" id="opt-same" onclick="selectTemplate('same')">
+              <div class="opt-icon">📄📄📄</div>
+              <div class="opt-title">Yes, same template</div>
+              <div class="opt-desc">All PDFs have identical layout — invoices from same vendor, same form, etc.</div>
+            </div>
+            <div class="template-option" id="opt-diff" onclick="selectTemplate('different')">
+              <div class="opt-icon">📄📃🗒️</div>
+              <div class="opt-title">No, different templates</div>
+              <div class="opt-desc">PDFs have different layouts — different vendors, different form types, etc.</div>
+            </div>
+          </div>
+          <button class="btn btn-primary hidden" id="btn-proceed" style="margin-top:16px" onclick="proceedToPreview()">
+            Continue →
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── STEP 2: Preview ── -->
+    <div id="view-preview" class="hidden">
+      <div class="text-center mb-20">
+        <h2 style="font-size:22px;font-weight:700;color:#0f172a;margin-bottom:6px" id="preview-title">0 PDFs Uploaded</h2>
+        <p style="color:#64748b;font-size:14px">Pick a file to analyze. <strong>AI will be used for this first PDF</strong> to detect all fields accurately.</p>
+      </div>
+      <div class="row">
+        <div class="file-list" id="file-list"></div>
+        <div class="preview-panel">
+          <div>
+            <div class="preview-label">Selected File</div>
+            <div style="color:#0f172a;font-size:14px;font-weight:600" id="preview-name">—</div>
+            <div style="color:#94a3b8;font-size:12px;margin-top:4px" id="preview-size">—</div>
+            <div class="preview-hint llm" style="margin-top:14px;display:none"></div>
+          </div>
+          <button class="btn btn-primary" id="btn-analyze" style="margin-top:16px">✦ Analyse with AI</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── STEP 3: Select Fields ── -->
+    <div id="view-select" class="hidden">
+      <div class="text-center mb-20">
+        <h2 style="font-size:22px;font-weight:700;color:#0f172a;margin-bottom:6px">Select Fields to Extract</h2>
+        <p style="color:#64748b;font-size:14px">LLM detected <strong id="field-count">0</strong> fields from the preview PDF. Choose which to include in the CSV.</p>
+      </div>
+
+      <!-- Info bar showing which mode will be used for remaining PDFs -->
+      <div class="info-bar hidden" id="info-bar-regex">
+        ⚡ <strong>Same template detected</strong> — AI will generate a custom extractor for PDF #1. All remaining PDFs use it instantly (no more API calls).
+      </div>
+      <div class="info-bar hidden" id="info-bar-llm">
+        🤖 <strong>Different templates</strong> — each PDF will be processed individually using Groq LLM.
+      </div>
+
+      <div class="select-bar">
+        <span class="select-count" id="select-count">0 of 0 selected</span>
+        <button class="select-all-btn" id="btn-toggle-all">Select All</button>
+      </div>
+      <div class="fields-grid" id="fields-grid"></div>
+      <div class="custom-field-row">
+        <input class="custom-input" id="custom-input" placeholder="Add custom field (e.g. TDS Rate)…" />
+        <button class="btn btn-secondary" id="btn-add-custom">+ Add</button>
+      </div>
+      <button class="btn btn-primary" id="btn-extract" style="margin-top:16px" disabled>✦ Extract fields from all PDFs</button>
+    </div>
+
+    <!-- ── STEP 4: Extracting ── -->
+    <div id="view-extract" class="hidden center">
+      <div class="text-center mb-20" style="padding-top:8px">
+        <h2 style="font-size:22px;font-weight:700;color:#0f172a;margin-bottom:6px">Extracting Data</h2>
+        <p style="color:#64748b;font-size:14px" id="extract-status">Processing documents…</p>
+      </div>
+      <div class="progress-list" id="progress-list"></div>
+    </div>
+
+    <!-- ── STEP 5: Download ── -->
+    <div id="view-download" class="hidden">
+      <div class="text-center mb-20">
+        <div style="font-size:44px;margin-bottom:10px">🎉</div>
+        <h2 style="font-size:22px;font-weight:700;color:#0f172a;margin-bottom:6px">Extraction Complete!</h2>
+        <p style="color:#64748b;font-size:14px" id="done-summary">—</p>
+      </div>
+      <div class="table-wrap mb-20">
+        <table><thead id="result-thead"></thead><tbody id="result-tbody"></tbody></table>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-primary" id="btn-download" style="flex:1">⬇ Download CSV</button>
+        <button class="btn btn-secondary" id="btn-reset">Start Over</button>
+      </div>
+    </div>
+
+  </div>
+  <div class="footer">Powered by Python (pdfplumber) + Groq AI · Your documents are processed securely</div>
+</main>
+
+<script>
+  const API = 'http://localhost:3001';
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  let files          = [];
+  let selectedIdx    = 0;
+  let sameTemplate   = null;
+  let detectedFields = [];
+  let selectedFields = new Set();
+  let results        = [];
+  let csvData        = '';
+  // Session ID ties detect-fields → extract-fields so backend reuses the extractor
+  let sessionId      = '';
+  // Index of the file that was analyzed in Step 2 (the "preview" PDF)
+  // and the field values already extracted from it by the LLM during detect-fields.
+  // We reuse these directly for that PDF instead of calling extract-fields again.
+  let previewedFileIndex    = 0;
+  let previewExtractedValues = {};   // { "Invoice Number": "I0625...", ... }
+
+  // ── Utilities ──────────────────────────────────────────────────────────────
+  const STEP_ORDER = ['upload','preview','select','extract','download'];
+
+  function showView(name) {
+    STEP_ORDER.forEach(v => document.getElementById(`view-${v}`).classList.add('hidden'));
+    document.getElementById(`view-${name}`).classList.remove('hidden');
+    document.getElementById('hero').style.display = name === 'upload' ? 'block' : 'none';
+
+    const cur = STEP_ORDER.indexOf(name);
+    STEP_ORDER.forEach((s, i) => {
+      const el  = document.getElementById(`step-${s}`);
+      const num = el.querySelector('.step-num');
+      el.className = 'step' + (i === cur ? ' active' : i < cur ? ' done' : '');
+      num.textContent = i < cur ? '✓' : i + 1;
+      if (i < STEP_ORDER.length - 1)
+        document.getElementById(`line-${i+1}`).className = 'step-line' + (i < cur ? ' done' : '');
+    });
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('error-banner');
+    el.textContent = '⚠ ' + msg;
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 7000);
+  }
+
+  function setLoading(btnId, loading, idleText) {
+    const btn = document.getElementById(btnId);
+    btn.disabled = loading;
+    btn.innerHTML = loading ? `<span class="spinner"></span> Processing…` : idleText;
+  }
+
+  function updateModeBadge() {
+    // Badge removed — do nothing
+  }
+
+  // ── STEP 1: Upload ─────────────────────────────────────────────────────────
+  const uploadArea = document.getElementById('upload-area');
+  const fileInput  = document.getElementById('file-input');
+
+  uploadArea.addEventListener('click', () => fileInput.click());
+  uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('drag'); });
+  uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag'));
+  uploadArea.addEventListener('drop', e => { e.preventDefault(); uploadArea.classList.remove('drag'); handleFiles(e.dataTransfer.files); });
+  fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+  function handleFiles(rawFiles) {
+    files = Array.from(rawFiles).filter(f => f.type === 'application/pdf');
+    if (!files.length) { showError('Please upload PDF files only.'); return; }
+
+    // Update upload area to show count
+    uploadArea.innerHTML = `<div class="icon">✅</div><h3>${files.length} PDF${files.length > 1 ? 's' : ''} selected</h3><p>${files.map(f => f.name).join(', ').substring(0, 80)}${files.length > 2 ? '…' : ''}</p>`;
+
+    // Show template question (only if more than 1 PDF)
+    const tq = document.getElementById('template-question');
+    if (files.length > 1) {
+      tq.classList.remove('hidden');
+    } else {
+      // Single PDF — skip template question, no choice needed
+      sameTemplate = true;
+      proceedToPreview();
+    }
+  }
+
+  function selectTemplate(choice) {
+    sameTemplate = (choice === 'same');
+    document.getElementById('opt-same').classList.toggle('selected', sameTemplate);
+    document.getElementById('opt-diff').classList.toggle('selected', !sameTemplate);
+    document.getElementById('btn-proceed').classList.remove('hidden');
+  }
+
+  function proceedToPreview() {
+    selectedIdx = 0;
+    updateModeBadge();
+    renderPreview();
+    showView('preview');
+  }
+
+  // ── STEP 2: Preview ────────────────────────────────────────────────────────
+  function renderPreview() {
+    document.getElementById('preview-title').textContent = `${files.length} PDF${files.length > 1 ? 's' : ''} Uploaded`;
+    const list = document.getElementById('file-list');
+    list.innerHTML = '';
+    files.forEach((f, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'file-item' + (i === selectedIdx ? ' selected' : '');
+      btn.textContent = '📄 ' + f.name;
+      btn.onclick = () => { selectedIdx = i; renderPreview(); };
+      list.appendChild(btn);
+    });
+    document.getElementById('preview-name').textContent = files[selectedIdx].name;
+    document.getElementById('preview-size').textContent = (files[selectedIdx].size / 1024).toFixed(1) + ' KB · PDF Document';
+  }
+
+  document.getElementById('btn-analyze').addEventListener('click', async () => {
+    setLoading('btn-analyze', true, '✦ Analyze with AI');
+    try {
+      // Remember which file index was analyzed
+      previewedFileIndex = selectedIdx;
+      sessionId = crypto.randomUUID();
+
+      const formData = new FormData();
+      formData.append('file', files[selectedIdx]);
+      formData.append('same_template', String(sameTemplate === true));
+      formData.append('session_id', sessionId);
+
+      const res  = await fetch(`${API}/api/detect-fields`, { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.detail) throw new Error(data.detail);
+
+      detectedFields = data.fields;
+      selectedFields = new Set(detectedFields.map(f => f.key));
+
+      // ── Build a lookup of field values from what LLM already extracted ──────
+      // detect-fields already ran LLM on PDF #1 and got all values.
+      // We store them here so extract-fields never needs to re-process PDF #1.
+      previewExtractedValues = {};
+      detectedFields.forEach(f => {
+        if (f.key && f.value !== undefined) {
+          previewExtractedValues[f.key] = f.value;
+        }
+      });
+
+      if (data.extractor_ready) {
+        console.log(`✓ Extractor generated for session ${sessionId} — PDFs #2+ use it (0 LLM calls)`);
+      }
+
+      renderFieldsGrid();
+      showView('select');
+    } catch (e) {
+      showError(e.message);
+    }
+    setLoading('btn-analyze', false, '✦ Analyze with AI');
+  });
+
+  // ── STEP 3: Select Fields ──────────────────────────────────────────────────
+  function renderFieldsGrid() {
+    document.getElementById('field-count').textContent = detectedFields.length;
+
+    // Show the right info bar
+    document.getElementById('info-bar-regex').classList.toggle('hidden', sameTemplate !== true);
+    document.getElementById('info-bar-llm').classList.toggle('hidden', sameTemplate !== false);
+
+    const grid = document.getElementById('fields-grid');
+    grid.innerHTML = '';
+    detectedFields.forEach(f => {
+      const card = document.createElement('label');
+      card.className = 'field-card' + (selectedFields.has(f.key) ? ' checked' : '');
+      card.innerHTML = `
+        <input type="checkbox" ${selectedFields.has(f.key) ? 'checked' : ''} data-key="${f.key}" />
+        <div style="min-width:0">
+          <div class="field-key">${f.key}</div>
+          <div class="field-val">${f.value}</div>
+        </div>`;
+      card.querySelector('input').addEventListener('change', e => {
+        e.target.checked ? selectedFields.add(f.key) : selectedFields.delete(f.key);
+        card.classList.toggle('checked', e.target.checked);
+        updateSelectCount();
+      });
+      grid.appendChild(card);
+    });
+    updateSelectCount();
+  }
+
+  function updateSelectCount() {
+    document.getElementById('select-count').textContent = `${selectedFields.size} of ${detectedFields.length} selected`;
+    const btn = document.getElementById('btn-extract');
+    btn.textContent = `✦ Extract ${selectedFields.size} field${selectedFields.size !== 1 ? 's' : ''} from all ${files.length} PDF${files.length > 1 ? 's' : ''}`;
+    btn.disabled = selectedFields.size === 0;
+  }
+
+  document.getElementById('btn-toggle-all').addEventListener('click', () => {
+    if (selectedFields.size === detectedFields.length) selectedFields.clear();
+    else detectedFields.forEach(f => selectedFields.add(f.key));
+    renderFieldsGrid();
+  });
+
+  document.getElementById('btn-add-custom').addEventListener('click', addCustom);
+  document.getElementById('custom-input').addEventListener('keydown', e => { if (e.key === 'Enter') addCustom(); });
+
+  function addCustom() {
+    const input = document.getElementById('custom-input');
+    const val = input.value.trim();
+    if (val && !detectedFields.find(f => f.key === val)) {
+      detectedFields.push({ key: val, value: 'custom field' });
+      selectedFields.add(val);
+      renderFieldsGrid();
+      input.value = '';
+    }
+  }
+
+  // ── STEP 4: Extract ────────────────────────────────────────────────────────
+  document.getElementById('btn-extract').addEventListener('click', async () => {
+    const fields = [...selectedFields];
+    showView('extract');
+
+    const progressList = document.getElementById('progress-list');
+    progressList.innerHTML = '';
+    files.forEach((f, i) => {
+      const div = document.createElement('div');
+      div.className = 'progress-item';
+      div.innerHTML = `
+        <div class="progress-dot" id="pdot-${i}">${i + 1}</div>
+        <div style="flex:1">
+          <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+            <span style="color:#475569;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px">${f.name}</span>
+            <span style="color:#94a3b8;font-size:11px;margin-left:8px;flex-shrink:0" id="pstatus-${i}">waiting</span>
+          </div>
+          <div class="progress-bar-wrap"><div class="progress-bar" id="pbar-${i}"></div></div>
+        </div>`;
+      progressList.appendChild(div);
+    });
+
+    results = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const isSame = sameTemplate === true;
+      const isPreviewedFile = (i === previewedFileIndex);
+
+      // Mode label
+      let modeLabel;
+      if (isPreviewedFile) {
+        modeLabel = '🤖 LLM (preview)';
+      } else if (isSame) {
+        modeLabel = '⚡ extractor';
+      } else {
+        modeLabel = '🤖 LLM';
+      }
+
+      document.getElementById(`pdot-${i}`).className = 'progress-dot processing';
+      document.getElementById(`pdot-${i}`).textContent = isPreviewedFile ? '🤖' : '⚡';
+      document.getElementById(`pstatus-${i}`).textContent = modeLabel;
+      document.getElementById(`pbar-${i}`).className = 'progress-bar processing';
+      document.getElementById('extract-status').textContent =
+        `Processing ${i + 1} of ${files.length} — ${modeLabel}`;
+
+      try {
+        let normalizedExtracted = {};
+
+        if (isPreviewedFile) {
+          // ── PDF #1 (the one analyzed): reuse values from detect-fields ──────
+          // LLM already extracted these — no second API call needed.
+          for (const field of fields) {
+            const v = previewExtractedValues[field];
+            normalizedExtracted[field] = (v !== undefined && v !== null && String(v).trim() !== '')
+              ? String(v)
+              : 'N/A';
+          }
+        } else {
+          // ── All other PDFs: call extract-fields ──────────────────────────
+          const formData = new FormData();
+          formData.append('file', files[i]);
+          formData.append('fields', JSON.stringify(fields));
+          formData.append('same_template', String(isSame));
+          formData.append('session_id', sessionId);
+
+          const res  = await fetch(`${API}/api/extract-fields`, { method: 'POST', body: formData });
+          const data = await res.json();
+          if (data.detail) throw new Error(data.detail);
+
+          // Case-insensitive key lookup
+          const rawExtracted = data.extracted || {};
+          const lowerLookup  = {};
+          for (const [k, v] of Object.entries(rawExtracted)) {
+            lowerLookup[k.toLowerCase().trim()] = v;
+          }
+          for (const field of fields) {
+            if (field in rawExtracted) {
+              normalizedExtracted[field] = rawExtracted[field];
+            } else {
+              normalizedExtracted[field] = lowerLookup[field.toLowerCase().trim()] || 'N/A';
+            }
+          }
+
+          modeLabel = { 'generated_extractor': '⚡ generated', 'llm': '🤖 llm',
+                        'llm_fallback': '🤖 llm (fallback)' }[data.mode] || data.mode;
+        }
+
+        results.push({ _filename: files[i].name, _mode: modeLabel, ...normalizedExtracted });
+      } catch (e) {
+        results.push({ _filename: files[i].name, _mode: 'error', _error: e.message });
+        showError(`Error on ${files[i].name}: ${e.message}`);
+      }
+
+      document.getElementById(`pdot-${i}`).className = 'progress-dot done';
+      document.getElementById(`pdot-${i}`).textContent = '✓';
+      document.getElementById(`pstatus-${i}`).textContent = 'done';
+      document.getElementById(`pbar-${i}`).className = 'progress-bar done';
+    }
+
+    // ── Clean up: drop the generated extractor from server memory ──────────
+    if (sessionId) {
+      fetch(`${API}/api/session/${sessionId}`, { method: 'DELETE' }).catch(() => {});
+      console.log(`Session ${sessionId} cleared from server memory`);
+    }
+
+    buildCSV(fields);
+    renderTable(fields);
+    showView('download');
+  });
+
+  // ── STEP 5: Download ───────────────────────────────────────────────────────
+  function buildCSV(fields) {
+    const header = ['Filename', 'Extraction Mode', ...fields].join(',');
+    const rows   = results.map(r =>
+      [r._filename, r._mode || 'N/A', ...fields.map(f => `"${(r[f] || 'N/A').replace(/"/g, '""')}"`)] .join(',')
+    );
+    csvData = [header, ...rows].join('\n');
+  }
+
+  function renderTable(fields) {
+    const modeLabel = sameTemplate ? '⚡ generated extractor' : '🤖 LLM per PDF';
+    document.getElementById('done-summary').textContent =
+      `${results.length} document${results.length !== 1 ? 's' : ''} · ${fields.length} fields · ${modeLabel}`;
+
+    document.getElementById('result-thead').innerHTML =
+      '<tr><th>File</th><th>Mode</th>' + fields.map(f => `<th>${f}</th>`).join('') + '</tr>';
+
+    document.getElementById('result-tbody').innerHTML = results.map(r =>
+      `<tr>
+        <td class="filename">${r._filename}</td>
+        <td style="color:#64748b;font-size:11px;white-space:nowrap">${r._mode || 'N/A'}</td>
+        ${fields.map(f => `<td class="${(!r[f] || r[f] === 'N/A') ? 'na' : ''}">${r[f] || 'N/A'}</td>`).join('')}
+      </tr>`
+    ).join('');
+  }
+
+  document.getElementById('btn-download').addEventListener('click', () => {
+    const blob = new Blob([csvData], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = 'extracted_data.csv'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    // If session is still active, clean it up on the server
+    if (sessionId) {
+      fetch(`${API}/api/session/${sessionId}`, { method: 'DELETE' }).catch(() => {});
+    }
+    files = []; detectedFields = []; selectedFields.clear();
+    results = []; csvData = ''; sameTemplate = null; sessionId = '';
+    previewedFileIndex = 0; previewExtractedValues = {};
+    fileInput.value = '';
+    document.getElementById('template-question').classList.add('hidden');
+    document.getElementById('btn-proceed').classList.add('hidden');
+    document.getElementById('opt-same').classList.remove('selected');
+    document.getElementById('opt-diff').classList.remove('selected');
+    uploadArea.innerHTML = `<div class="icon">📂</div><h3>Drop PDFs here or click to browse</h3><p>Multiple files supported · PDF only</p><input type="file" id="file-input" multiple accept=".pdf" />`;
+    document.getElementById('file-input').addEventListener('change', e => handleFiles(e.target.files));
+    updateModeBadge();
+    showView('upload');
+  });
+</script>
+</body>
+</html>
