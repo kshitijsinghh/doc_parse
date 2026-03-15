@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DocParse — PDF Data Extractor</title>
+  <title>DocMind — PDF to Excel & Invoice Extractor for Business & Finance Teams</title>
+  <meta name="description" content="Extract invoices, tables and data from PDF to Excel or CSV in seconds. Bulk PDF to Excel converter for business and finance teams. Invoice extractor, PDF data extraction tool." />
+  <meta name="keywords" content="pdf to excel, invoice extractor, pdf invoice extractor, extract invoice from pdf, bulk pdf converter, pdf to csv, pdf data extraction, invoice to excel" />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -11,7 +13,7 @@
 
     header { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 14px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 3px rgba(0,0,0,0.05); position: sticky; top: 0; z-index: 10; }
     .logo { display: flex; align-items: center; gap: 10px; }
-    .logo-icon { width: 36px; height: 36px; background: #2563eb; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+    .logo-icon { width: 36px; height: 36px; background: #2563eb; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 18px; overflow: hidden; }
     .logo-name { font-family: 'Playfair Display', serif; font-weight: 800; font-size: 18px; color: #0f172a; letter-spacing: -0.02em; }
     .logo-sub { font-size: 10px; color: #94a3b8; letter-spacing: 0.1em; text-transform: uppercase; }
     .mode-badge { font-size: 11px; font-weight: 600; padding: 5px 14px; border-radius: 20px; border: 1px solid; display: none; }
@@ -130,15 +132,32 @@
     .footer { display: none; }
     .mb-20 { margin-bottom: 20px; }
   </style>
+  <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
 
 <header>
   <div class="logo">
-    <div class="logo-icon">⚖</div>
+    <div class="logo-icon">
+      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- PDF document base -->
+        <rect x="3" y="1" width="12" height="16" rx="2" fill="white" opacity="0.95"/>
+        <rect x="3" y="1" width="12" height="16" rx="2" stroke="white" stroke-opacity="0.3" stroke-width="0.5"/>
+        <!-- Folded corner -->
+        <path d="M11 1 L15 5 L11 5 Z" fill="#2563eb"/>
+        <path d="M11 1 L15 5 H11 Z" fill="white" opacity="0.4"/>
+        <!-- Data lines on document -->
+        <rect x="5.5" y="7.5" width="7" height="1.2" rx="0.6" fill="#2563eb" opacity="0.7"/>
+        <rect x="5.5" y="10" width="5" height="1.2" rx="0.6" fill="#2563eb" opacity="0.5"/>
+        <rect x="5.5" y="12.5" width="6" height="1.2" rx="0.6" fill="#2563eb" opacity="0.5"/>
+        <!-- Arrow pointing right (extraction) -->
+        <circle cx="17" cy="16" r="4.5" fill="#1d4ed8"/>
+        <path d="M14.8 16 H19.2 M17.5 13.8 L19.7 16 L17.5 18.2" stroke="white" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
     <div>
-      <div class="logo-name">DocParse</div>
-      <div class="logo-sub">For CA & Law Firms</div>
+      <div class="logo-name">DocMind</div>
+      <div class="logo-sub">For Business & Finance Teams</div>
     </div>
   </div>
   <div class="mode-badge hidden" id="mode-badge"></div>
@@ -147,7 +166,7 @@
 <main>
   <div class="hero" id="hero">
     <h1>Extract Structured Data<br /><span>from PDF Files in Bulk</span></h1>
-    <p>Upload bulk PDFs, preview & select the fields you need — get a clean CSV in seconds.</p>
+    <p>Extract invoices, tables & data from PDF to Excel or CSV in seconds. The fastest bulk PDF to Excel converter — perfect for invoice extraction, financial documents, and business data processing.</p>
   </div>
 
   <div class="error-banner" id="error-banner"></div>
