@@ -282,7 +282,7 @@
 </main>
 
 <script>
-  const API = 'http://localhost:3001';
+  const API = window.location.hostname === 'localhost' ? 'http://localhost:3001' : 'https://doc-parse-9k6p.onrender.com';
 
   // ── State ──────────────────────────────────────────────────────────────────
   let files          = [];
@@ -411,11 +411,31 @@
       if (data.detail) throw new Error(data.detail);
 
       detectedFields = data.fields;
+
+      // ── Deduplicate keys: if same key appears N times → rename key_1 … key_N ─
+      // Applied even when N=2: both get the suffix (key_1 and key_2).
+      // _origKey stores the raw label so backend receives the original label name.
+      // _occIdx is 1-based occurrence index among fields sharing the same key.
+      const keyCount = {};
+      detectedFields.forEach(f => { keyCount[f.key] = (keyCount[f.key] || 0) + 1; });
+      const keyIdx = {};
+      detectedFields = detectedFields.map(f => {
+        const isDup = keyCount[f.key] > 1;
+        keyIdx[f.key] = (keyIdx[f.key] || 0) + 1;
+        return {
+          ...f,
+          key:      isDup ? `${f.key}_${keyIdx[f.key]}` : f.key,
+          _origKey: f.key,           // raw label (e.g. "Bank Name")
+          _occIdx:  keyIdx[f.key],   // 1, 2, 3 …
+        };
+      });
+
+      // Use deduplicated keys for the Set — no more silent deduplication by Set
       selectedFields = new Set(detectedFields.map(f => f.key));
 
-      // ── Build a lookup of field values from what LLM already extracted ──────
-      // detect-fields already ran LLM on PDF #1 and got all values.
-      // We store them here so extract-fields never needs to re-process PDF #1.
+      // ── Build previewExtractedValues keyed by deduplicated display key ───────
+      // detect-fields LLM already extracted values for PDF #1 in correct order.
+      // Map the suffixed key → value so PDF #1 never needs a second API call.
       previewExtractedValues = {};
       detectedFields.forEach(f => {
         if (f.key && f.value !== undefined) {
@@ -451,7 +471,12 @@
       card.innerHTML = `
         <input type="checkbox" ${selectedFields.has(f.key) ? 'checked' : ''} data-key="${f.key}" />
         <div style="min-width:0">
-          <div class="field-key">${f.key}</div>
+          <div class="field-key">
+            ${f.key}
+            ${(f._origKey && f._origKey !== f.key)
+              ? `<span style="margin-left:4px;font-size:9px;font-weight:700;background:#fef3c7;color:#b45309;border-radius:4px;padding:1px 5px;vertical-align:middle">dup</span>`
+              : ''}
+          </div>
           <div class="field-val">${f.value}</div>
         </div>`;
       card.querySelector('input').addEventListener('change', e => {
@@ -484,7 +509,7 @@
     const input = document.getElementById('custom-input');
     const val = input.value.trim();
     if (val && !detectedFields.find(f => f.key === val)) {
-      detectedFields.push({ key: val, value: 'custom field' });
+      detectedFields.push({ key: val, value: 'custom field', _origKey: val, _occIdx: 1 });
       selectedFields.add(val);
       renderFieldsGrid();
       input.value = '';
@@ -550,9 +575,19 @@
           }
         } else {
           // ── All other PDFs: call extract-fields ──────────────────────────
+          // Send ORIGINAL (un-suffixed) unique keys to the backend.
+          // e.g. ["Bank Name", "Account Number"] not ["Bank Name_1", "Bank Name_2"]
+          // Backend returns one value per original key.
+          // For _2 / _3 occurrences we find the Nth match in raw_text.
+          const origKeys = [...new Set(
+            detectedFields
+              .filter(f => selectedFields.has(f.key))
+              .map(f => f._origKey || f.key)
+          )];
+
           const formData = new FormData();
           formData.append('file', files[i]);
-          formData.append('fields', JSON.stringify(fields));
+          formData.append('fields', JSON.stringify(origKeys));
           formData.append('same_template', String(isSame));
           formData.append('session_id', sessionId);
 
@@ -560,17 +595,59 @@
           const data = await res.json();
           if (data.detail) throw new Error(data.detail);
 
-          // Case-insensitive key lookup
           const rawExtracted = data.extracted || {};
-          const lowerLookup  = {};
+          const rawText      = data.raw_text  || '';
+
+          // Case-insensitive lookup for direct values
+          const lowerLookup = {};
           for (const [k, v] of Object.entries(rawExtracted)) {
             lowerLookup[k.toLowerCase().trim()] = v;
           }
+
+          // For each selected display key (may be suffixed), resolve correct value
+          const occurrenceSeen = {};
           for (const field of fields) {
-            if (field in rawExtracted) {
-              normalizedExtracted[field] = rawExtracted[field];
+            const meta     = detectedFields.find(f => f.key === field);
+            const origKey  = meta?._origKey || field;
+            const occIdx   = meta?._occIdx  || 1;
+
+            occurrenceSeen[origKey] = (occurrenceSeen[origKey] || 0) + 1;
+
+            if (occIdx === 1) {
+              // First occurrence → use direct backend value
+              normalizedExtracted[field] =
+                rawExtracted[origKey] ||
+                lowerLookup[origKey.toLowerCase().trim()] ||
+                'N/A';
             } else {
-              normalizedExtracted[field] = lowerLookup[field.toLowerCase().trim()] || 'N/A';
+              // Nth occurrence → find in raw_text
+              // Strategy 1: find the Nth "Label : value" match on separate lines
+              const esc = origKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const re  = new RegExp(`${esc}\\s*:\\s*([^\\n]+)`, 'gi');
+              let match, count = 0, found = null;
+              while ((match = re.exec(rawText)) !== null) {
+                count++;
+                if (count === occIdx) {
+                  // Strip right-column contamination: stop before the same label repeats
+                  let val = match[1].trim();
+                  // Remove anything after "   Label :" on the same match
+                  val = val.split(/\s{3,}/)[0].trim();
+                  // Also strip if "Label :" appears again inside the value (same-line dup)
+                  const innerRe = new RegExp(`\\s+${esc}\\s*:`, 'i');
+                  val = val.split(innerRe)[0].trim();
+                  found = val || null;
+                  break;
+                }
+              }
+
+              // Strategy 2 (fallback): same-line "Label : val1  Label : val2" pattern
+              if (!found) {
+                const sameLineRe = new RegExp(`${esc}\\s*:.+?${esc}\\s*:\\s*([^\\n]+)`, 'i');
+                const m2 = rawText.match(sameLineRe);
+                if (m2) found = m2[1].trim();
+              }
+
+              normalizedExtracted[field] = found || 'N/A';
             }
           }
 
