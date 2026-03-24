@@ -301,7 +301,9 @@
 </main>
 
 <script>
-  const API = window.location.hostname === 'localhost' ? 'http://localhost:3001' : 'https://doc-parse-9k6p.onrender.com';
+  const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:')
+    ? 'http://localhost:3001'
+    : 'https://doc-parse-9k6p.onrender.com';
 
   // ── State ──────────────────────────────────────────────────────────────────
   let files          = [];
@@ -422,7 +424,7 @@
 
       const formData = new FormData();
       formData.append('file', files[selectedIdx]);
-      formData.append('same_template', String(sameTemplate === true));
+      formData.append('same_template', sameTemplate === true ? 'true' : 'false');
       formData.append('session_id', sessionId);
 
       const res  = await fetch(`${API}/api/detect-fields`, { method: 'POST', body: formData });
@@ -604,10 +606,18 @@
               .map(f => f._origKey || f.key)
           )];
 
+          // Also send table line-item fields (Header_N) as-is — resolved
+          // directly by the backend table schema, not deduplicated.
+          const tableKeys = detectedFields
+            .filter(f => selectedFields.has(f.key) && /^.+_\d+$/.test(f.key) && f._occIdx === 1)
+            .map(f => f.key);
+
+          const allKeys = [...new Set([...origKeys, ...tableKeys])];
+
           const formData = new FormData();
           formData.append('file', files[i]);
-          formData.append('fields', JSON.stringify(origKeys));
-          formData.append('same_template', String(isSame));
+          formData.append('fields', JSON.stringify(allKeys));
+          formData.append('same_template', isSame ? 'true' : 'false');
           formData.append('session_id', sessionId);
 
           const res  = await fetch(`${API}/api/extract-fields`, { method: 'POST', body: formData });
@@ -672,6 +682,7 @@
 
           modeLabel = { 'generated_extractor': '⚡ generated', 'llm': '🤖 llm',
                         'llm_fallback': '🤖 llm (fallback)' }[data.mode] || data.mode;
+          console.log(`PDF #${i+1} (${files[i].name}): mode=${data.mode}, session=${sessionId}`);
         }
 
         results.push({ _filename: files[i].name, _mode: modeLabel, ...normalizedExtracted });
