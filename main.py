@@ -27,62 +27,577 @@ app.add_middleware(
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL   = "llama-3.3-70b-versatile"
 
+# ── Groq API key pool (round-robin) ──────────────────────────────────────────
+# Reads up to 4 keys from env: GROQ_API_KEY_1, GROQ_API_KEY_2, GROQ_API_KEY_3,
+# GROQ_API_KEY_4. Also falls back to legacy GROQ_API_KEY if none of the numbered
+# keys are set. Add keys to your .env file like:
+#   GROQ_API_KEY_1=gsk_xxx
+#   GROQ_API_KEY_2=gsk_yyy
+#   GROQ_API_KEY_3=gsk_zzz
+#   GROQ_API_KEY_4=gsk_www
+def _load_groq_keys() -> list[str]:
+    keys = []
+    for i in range(1, 5):
+        k = os.getenv(f"GROQ_API_KEY_{i}", "").strip()
+        if k:
+            keys.append(k)
+    if not keys:
+        # legacy fallback — single key
+        legacy = os.getenv("GROQ_API_KEY", "").strip()
+        if legacy:
+            keys.append(legacy)
+    return keys
+
+GROQ_API_KEYS: list[str] = _load_groq_keys()
+_groq_key_index = 0          # global round-robin pointer
+_groq_key_lock  = __import__("asyncio").Lock()   # async-safe increment
+
+async def _next_groq_key() -> str:
+    """Return the next API key in round-robin order (async-safe)."""
+    global _groq_key_index
+    if not GROQ_API_KEYS:
+        raise HTTPException(
+            status_code=500,
+            detail="No Groq API keys configured. Set GROQ_API_KEY_1 … GROQ_API_KEY_4 in .env"
+        )
+    async with _groq_key_lock:
+        key = GROQ_API_KEYS[_groq_key_index % len(GROQ_API_KEYS)]
+        _groq_key_index += 1
+    return key
+
 # ── In-memory session store ───────────────────────────────────────────────────
-# Maps session_id → generated extractor Python code string.
+# Maps session_id → {
+#   "regex":  { "Field Name": "regex_pattern", ... },   <- text field extraction
+#   "tables": [ { "headers": [...], "col_map": { "safe_header": col_idx } }, ... ]
+#                                                        <- table line item extraction
+# }
 # Populated by /api/detect-fields, consumed by /api/extract-fields.
 # Never written to disk. Dropped automatically when the process ends
 # or when the session explicitly clears it.
-_EXTRACTOR_STORE: dict[str, str] = {}
+_EXTRACTOR_STORE: dict[str, dict] = {}
 
 
-def _run_schema(schema: dict, flat_text: str, fields: list[str]) -> dict:
+def _is_garbled_text(text: str) -> bool:
     """
-    Apply a regex schema to extract fields from flattened PDF text.
-
-    schema = { "Field Name": "regex_pattern", ... }
-    Patterns run with re.IGNORECASE | re.MULTILINE — NOT re.DOTALL.
-    This keeps [^\n]+ / .+ matching on one line only.
-
-    Patterns with TWO capture groups (e.g. Period split "Jan'202\\n6") have
-    their groups auto-concatenated: result = group1 + group2.
-
-    Pre-processes text: strips leading/trailing whitespace from every line.
+    Detect PDFs with font-encoding issues where pdfplumber produces scrambled text.
+    Signs: colons appearing INSIDE words (e.g. "Numb:e7r", "Amoun:t"),
+    digits embedded mid-word (e.g. "N1o6i"), or very high garble ratio.
+    These PDFs must use LLM extraction — regex on garbled text always fails.
     """
-    result = {}
+    if not text or len(text) < 50:
+        return False
+    words = text.split()
+    if not words:
+        return False
+    # Colon splits a word: "Numb:e7r", "Numbe:r1", "Amoun:t"
+    colon_in_word = sum(1 for w in words if re.search(r'[a-zA-Z]:[a-zA-Z0-9]', w))
+    # Digit embedded mid-word: "N1o6i", "ReveCrhsaer"  
+    digit_mid_word = sum(1 for w in words if re.search(r'[a-zA-Z][0-9][a-zA-Z]', w))
+    garble_ratio = (colon_in_word + digit_mid_word) / len(words)
+    return garble_ratio > 0.04  # >4% of words show garbling
+
+def _extract_table_by_xpos(pdf_bytes: bytes, page_index: int = 0) -> dict:
+    """
+    Generic table column extractor using PDF word x-coordinates.
+    Finds any table with column headers + a TOTAL/data row,
+    maps column labels to amount values by x-position alignment.
+    Works for any invoice layout — no hardcoded column names.
+    Returns dict of {normalized_col_label: numeric_string}.
+    """
+    try:
+        import pdfplumber
+        from io import BytesIO
+
+        COL_KEYWORDS = {
+            'qty', 'quantity', 'gross', 'discount', 'other', 'taxable',
+            'cgst', 'sgst', 'ugst', 'igst', 'cess', 'total', 'amount',
+            'charges', 'value', 'rate', 'price', 'unit', 'tax', 'item'
+        }
+
+        with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+            if page_index >= len(pdf.pages):
+                return {}
+            page = pdf.pages[page_index]
+            words = page.extract_words(x_tolerance=3, y_tolerance=3)
+            if not words:
+                return {}
+
+            # Group words by y-position (row)
+            rows_by_y: dict = {}
+            for w in words:
+                y = round(w['top'])
+                rows_by_y.setdefault(y, []).append(w)
+
+            # Identify header rows and TOTAL row
+            header_ys: set = set()
+            total_y = None
+            for y, row_words in sorted(rows_by_y.items()):
+                texts = [w['text'].lower() for w in row_words]
+                has_keyword = any(any(k in t for k in COL_KEYWORDS) for t in texts)
+                has_big_number = any(re.search(r'\d{2,}\.', t) for t in texts)
+                is_total_row = any(t in ('total', 'totals') for t in texts) and has_big_number
+                if has_keyword and not has_big_number:
+                    header_ys.add(y)
+                if is_total_row and total_y is None:
+                    total_y = y
+
+            if not header_ys or total_y is None:
+                return {}
+
+            # Build column spans from header words (merge words within 8px)
+            header_words = sorted(
+                [w for y in header_ys for w in rows_by_y[y]],
+                key=lambda w: w['x0']
+            )
+            columns: list = []  # [(x0, x1, label)]
+            for w in header_words:
+                if columns and w['x0'] - columns[-1][1] <= 8:
+                    x0, x1, label = columns[-1]
+                    columns[-1] = (x0, max(x1, w['x1']), label + ' ' + w['text'])
+                else:
+                    columns.append((w['x0'], w['x1'], w['text']))
+
+            # Get numeric amounts from TOTAL row
+            total_words = sorted(rows_by_y.get(total_y, []), key=lambda w: w['x0'])
+            amounts = [
+                (w['x0'], w['x1'], w['text'])
+                for w in total_words
+                if re.match(r'[\d,\.]+$', w['text']) and '.' in w['text']
+            ]
+
+            if not amounts:
+                return {}
+
+            # Assign each amount to the column whose x-range it falls in
+            result = {}
+            for ax0, ax1, aval in amounts:
+                a_center = (ax0 + ax1) / 2
+                best_col = None
+                best_dist = float('inf')
+                for cx0, cx1, clabel in columns:
+                    c_center = (cx0 + cx1) / 2
+                    in_range = (cx0 - 15) <= a_center <= (cx1 + 15)
+                    dist = abs(a_center - c_center)
+                    if in_range and dist < best_dist:
+                        best_dist = dist
+                        best_col = clabel
+                    elif not in_range and dist < best_dist:
+                        # Fallback to nearest if nothing in range
+                        best_dist = dist
+                        best_col = clabel
+                if best_col:
+                    # Normalise: lowercase, strip noise words
+                    norm = re.sub(
+                        r'\b(qty|quantity|total|totals|no|sno|sr)\b', '',
+                        best_col, flags=re.IGNORECASE
+                    ).strip().lower()
+                    norm = re.sub(r'\s+', ' ', norm).strip()
+                    if norm:
+                        result[norm] = aval
+
+            return result
+    except Exception as e:
+        logger.warning("_extract_table_by_xpos error: %s", e)
+        return {}
+
+
+def _match_field_to_col(field_name: str, col_map: dict) -> str:
+    """
+    Match a user field name to a detected column label using fuzzy keyword overlap.
+    e.g. "Gross Amount_occ1" → "gross amount" → "2999.00"
+    Returns the matched value or "" if no match.
+    """
+    # Strip _occ suffix
+    base = re.sub(r'_occ\d+$', '', field_name).strip().lower()
+    # Remove filler words
+    base = re.sub(r'\b(total|amount|rs|inr|value)\b', ' ', base).strip()
+    base_tokens = set(base.split())
+
+    best_match = None
+    best_score = 0
+    for col_label, col_val in col_map.items():
+        col_tokens = set(col_label.split())
+        overlap = len(base_tokens & col_tokens)
+        if overlap > best_score:
+            best_score = overlap
+            best_match = col_val
+
+    return best_match if best_score > 0 else ""
+
+
+
+
+
+# ── Known-good patterns for fields the LLM consistently gets wrong ────────────
+# These override any LLM-generated pattern when the field name matches (case-insensitive).
+# Patterns must use double-escaped backslashes (they are stored as raw strings then compiled).
+# _KNOWN_PATTERNS removed — all patterns generated dynamically by LLM
+_KNOWN_PATTERNS: dict[str, str] = {}  # kept for backwards compat, always empty
+
+
+def _apply_known_pattern(field: str, text: str) -> str:
+    """No-op — patterns are now generated entirely by LLM schema."""
+    return ""
+
+
+    try:
+        m = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        if m:
+            # Pick first non-None group (handles patterns with alternatives)
+            groups = [g for g in m.groups() if g is not None] if m.lastindex else []
+            val = groups[0].strip() if groups else m.group(0).strip()
+            if "\n" in val:
+                val = val.split("\n")[0].strip()
+            return val
+    except re.error:
+        pass
+    return ""
+
+
+
+def _get_field_from_table(field: str, table_rows: list[list]) -> str:
+    """
+    Last-resort: search table_rows for a column whose header matches `field`,
+    and return the first non-empty data cell value in that column.
+    Used when regex schema returns a header row instead of a real value.
+    """
+    if not table_rows:
+        return ""
+    field_lower = field.lower().strip()
+    for i, row in enumerate(table_rows):
+        row_cells = [c.strip() if c else "" for c in row]
+        # Check if this looks like a header row
+        row_lower = [c.lower() for c in row_cells]
+        # Find matching column
+        col_idx = None
+        for j, cell in enumerate(row_lower):
+            if field_lower in cell or cell in field_lower:
+                col_idx = j
+                break
+        if col_idx is not None:
+            # Look for first data row below this header
+            for data_row in table_rows[i+1:]:
+                data_cells = [c.strip() if c else "" for c in data_row]
+                if col_idx < len(data_cells) and data_cells[col_idx]:
+                    val = data_cells[col_idx]
+                    # Only return if it looks like a number/amount, not another header
+                    if re.search(r'[\d\.]', val):
+                        return val
+    return ""
+
+
+def _run_schema(schema: dict, flat_text: str, fields: list[str],
+                table_rows: list[list] = None,
+                table_schema: list[dict] = None,
+                left_text: str = "") -> dict:
+    """
+    Apply a regex schema to extract fields from flattened PDF text,
+    AND extract table line items using the stored table_schema.
+    Uses left_text (single-column) first to avoid two-column contamination.
+    """
+    result     = {}
     clean_text = "\n".join(line.strip() for line in flat_text.split("\n"))
+    # Single-column text avoids "Noida  Rangareddy," two-column merges
+    clean_left = "\n".join(line.strip() for line in left_text.split("\n")) if left_text else ""
+
+    # ── Pre-build table line items from table_rows if table_schema available ──
+    table_cells: dict[str, str] = {}
+    if table_rows and table_schema:
+        table_cells = _apply_table_schema(table_rows, table_schema)
+
+    # ── Build a direct col-position lookup from raw table_rows ───────────────
+    # Maps normalised header name → (col_index, data_value) from the TOTAL row
+    # This lets us extract CGST, IGST, Total etc. directly from table cells
+    # rather than relying on fragile regex over flat text.
+    direct_table_lookup: dict[str, str] = {}
+    if table_rows:
+        header_row  = None
+        data_row    = None
+        total_row   = None
+        for row in table_rows:
+            cells = [c.strip() if c else "" for c in row]
+            if _is_header_row(cells) and header_row is None:
+                header_row = cells
+            elif header_row is not None:
+                joined = " ".join(c for c in cells if c).lower()
+                if re.match(r'total\b', joined):
+                    total_row = cells
+                elif any(re.search(r'[\d,\.]+', c) for c in cells):
+                    if data_row is None:
+                        data_row = cells
+        use_row = total_row or data_row
+        if header_row and use_row:
+            for col_idx, hdr in enumerate(header_row):
+                if not hdr:
+                    continue
+                norm = re.sub(r'\s+', ' ', hdr.lower().strip())
+                # Also add sub-parts of multi-word headers
+                direct_table_lookup[norm] = use_row[col_idx].strip() if col_idx < len(use_row) else ""
+                for word in norm.split():
+                    if len(word) >= 3 and word not in direct_table_lookup:
+                        direct_table_lookup[word] = use_row[col_idx].strip() if col_idx < len(use_row) else ""
 
     for field in fields:
+        # ── Table field: SomeHeader_N ─────────────────────────────────────────
+        if re.match(r'^.+_\d+$', field) and field in table_cells:
+            result[field] = table_cells[field]
+            continue
+
+        # ── Direct table column match ─────────────────────────────────────────
+        # If the field name matches a table column header, extract directly
+        # from the data row — more specific/longer matches take priority
+        field_norm = re.sub(r'\s+', ' ', field.lower().strip())
+        # Collect all matching keys and pick the one with longest overlap
+        best_val = ""
+        best_len = 0
+        for tbl_key, tbl_val in direct_table_lookup.items():
+            if not tbl_val or not re.search(r'[\d,\.]+', tbl_val):
+                continue
+            if tbl_key == field_norm:
+                # Exact match always wins
+                best_val = tbl_val
+                best_len = 9999
+                break
+            if field_norm in tbl_key or tbl_key in field_norm:
+                overlap = len(set(field_norm.split()) & set(tbl_key.split()))
+                if overlap > best_len:
+                    best_val = tbl_val
+                    best_len = overlap
+        if best_val:
+            result[field] = best_val
+            continue
+
+        # ── Known-good pattern override (runs before LLM-generated schema) ──
+        known_val = _apply_known_pattern(field, clean_text)
+        if known_val:
+            result[field] = known_val
+            continue
+
+        # ── Text field: regex pattern ─────────────────────────────────────────
         pattern = schema.get(field)
         if not pattern:
             result[field] = "N/A"
             continue
         try:
-            m = re.search(pattern, clean_text, re.IGNORECASE | re.MULTILINE)
+            # Try left_text first (avoids two-column contamination)
+            m = None
+            if clean_left:
+                m = re.search(pattern, clean_left, re.IGNORECASE | re.MULTILINE)
+            # Fall back to full merged text if not found in left
+            if not m:
+                m = re.search(pattern, clean_text, re.IGNORECASE | re.MULTILINE)
+
             if m:
                 if m.lastindex and m.lastindex >= 2:
-                    # Multi-group pattern — concatenate all non-None groups.
-                    # Convention for row-data patterns that include a row identifier
-                    # as group 1 (e.g. "Description" = "GSSJAN26PO"):
-                    # if the field name matches the first captured group exactly
-                    # (case-insensitive), return only group 1.
-                    # Otherwise concatenate from group 2 onwards (e.g. Period = Jan'2026).
-                    groups = [g for g in m.groups() if g is not None]
+                    groups      = [g for g in m.groups() if g is not None]
                     first_group = groups[0].strip() if groups else ""
                     field_lower = field.lower().strip()
-                    # If first group IS the field value (e.g. Description captures "GSSJAN26PO")
                     if first_group.lower() == field_lower or len(groups) == 1:
-                        result[field] = first_group
+                        val = first_group
                     else:
-                        # Concatenate remaining groups (skip identifier in group1)
-                        result[field] = "".join(groups[1:]).strip()
+                        val = "".join(groups[1:]).strip()
                 else:
-                    result[field] = m.group(1).strip()
+                    val = m.group(1).strip()
+                # Reject if value contains newlines (multi-line bleed) — take only first line
+                if "\n" in val:
+                    val = val.split("\n")[0].strip()
+                # Reject if value looks like a table header row (3+ column keywords)
+                _TBL_KWS = {"cgst","sgst","igst","total","amount","rate","utgst","tax","value","invoice","description","period"}
+                val_kw_hits = sum(1 for kw in _TBL_KWS if kw in val.lower().split())
+                if val_kw_hits >= 3:
+                    val = "N/A"
+                result[field] = val
             else:
                 result[field] = "N/A"
         except re.error as e:
             logger.warning("Bad regex for field %r: %s — pattern: %r", field, e, pattern)
             result[field] = "N/A"
+            continue
+
+        if result.get(field) == "N/A" and pattern:
+            logger.info("Pattern no-match: field=%r pattern=%r", field, pattern)
+            result[field] = "N/A"
+
     return result
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TABLE SCHEMA  —  built once from the preview PDF, reused on all subsequent PDFs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+TAX_SUMMARY_KEYWORDS = frozenset([
+    "cgst", "sgst", "igst", "taxable value", "total tax",
+    "total invoice", "value of service", "taxable amount",
+])
+
+def _safe_col_name(header: str) -> str:
+    """
+    Convert a table header to a safe, readable key name.
+    'Unit Price' -> 'Unit_Price', 'HSN/SAC' -> 'HSN_SAC'
+    Truncated to 30 chars max to avoid monster keys from data cells
+    mistaken for headers.
+    """
+    cleaned = re.sub(r'[^a-zA-Z0-9]', '_', header.strip()).strip('_')
+    # Collapse multiple underscores
+    cleaned = re.sub(r'_+', '_', cleaned)
+    # Truncate to 30 chars, cut at last underscore to avoid partial words
+    if len(cleaned) > 30:
+        cleaned = cleaned[:30].rstrip('_')
+    return cleaned
+
+
+# Known short header keywords — a real header row almost always contains at least one
+_HEADER_KEYWORDS = frozenset([
+    "sno", "s.no", "sr", "no", "description", "desc", "particulars",
+    "qty", "quantity", "rate", "amount", "price", "total", "value",
+    "supply", "frequency", "period", "hsn", "sac", "cgst", "sgst",
+    "igst", "tax", "discount", "unit", "item", "product", "service",
+    "date", "invoice", "narration", "details",
+])
+
+def _is_header_row(row: list[str]) -> bool:
+    """
+    True if this row looks like column headers.
+    Checks two things:
+    1. At least one cell matches a known header keyword (case-insensitive)
+    2. No single cell is longer than 60 chars (data cells are often long paragraphs)
+    """
+    non_empty = [c.strip() for c in row if c.strip()]
+    if not non_empty:
+        return False
+
+    # If any cell is very long (>60 chars) it's almost certainly a data cell
+    if any(len(c) > 60 for c in non_empty):
+        return False
+
+    # Must contain at least one known header keyword
+    flat = " ".join(c.lower() for c in non_empty)
+    has_keyword = any(kw in flat.split() or
+                      any(kw in cell.lower() for cell in non_empty)
+                      for kw in _HEADER_KEYWORDS)
+    if not has_keyword:
+        return False
+
+    # Must be mostly text (not numbers)
+    num_count  = sum(1 for c in non_empty if re.match(r'^[\d,\.]+$', c))
+    text_count = len(non_empty) - num_count
+    return text_count >= len(non_empty) * 0.6
+
+
+def _is_tax_summary_header(row: list[str]) -> bool:
+    """True if the header belongs to a GST tax summary table."""
+    flat = " ".join(c.lower() for c in row if c)
+    return sum(1 for k in TAX_SUMMARY_KEYWORDS if k in flat) >= 2
+
+
+def build_table_schema(table_rows: list[list]) -> list[dict]:
+    """
+    Analyse the table rows from the PREVIEW PDF and build a table_schema list.
+    Each entry describes one logical table:
+        {
+            "headers":        ["Description", "Qty", "Rate", "Amount"],
+            "col_map":        {"Description": 0, "Qty": 1, "Rate": 2, "Amount": 3},
+            "safe_col_map":   {"Description": 0, "Qty": 1, "Rate": 2, "Amount": 3},
+            "is_tax_summary": False,
+            "row_count":      2       <- how many data rows found in preview PDF
+        }
+    Stored in _EXTRACTOR_STORE[session_id]["tables"] for reuse.
+    """
+    if not table_rows:
+        return []
+
+    schema    = []
+    cur_hdr   = None
+    cur_rows  = []
+
+    def _flush():
+        if cur_hdr and cur_rows:
+            col_map      = {h.strip(): i for i, h in enumerate(cur_hdr) if h.strip()}
+            safe_col_map = {_safe_col_name(h): i for i, h in enumerate(cur_hdr) if h.strip()}
+            schema.append({
+                "headers":        [h.strip() for h in cur_hdr],
+                "col_map":        col_map,
+                "safe_col_map":   safe_col_map,
+                "is_tax_summary": _is_tax_summary_header(cur_hdr),
+                "row_count":      len(cur_rows),
+            })
+
+    for row in table_rows:
+        row = [c.strip() if c else "" for c in row]
+        if _is_header_row(row):
+            _flush()
+            cur_hdr  = row
+            cur_rows = []
+        elif cur_hdr:
+            non_empty = [c for c in row if c]
+            if len(non_empty) >= 2:
+                cur_rows.append(row)
+
+    _flush()
+    logger.info("Table schema built: %d tables detected", len(schema))
+    return schema
+
+
+def _apply_table_schema(table_rows: list[list], table_schema: list[dict]) -> dict[str, str]:
+    """
+    Apply a stored table_schema to fresh table_rows from a new PDF.
+    Returns { "Description_1": "Item A", "Qty_1": "2", ... } for all line item tables.
+    Tax summary tables are skipped (handled by _extract_from_table_rows).
+    """
+    if not table_rows or not table_schema:
+        return {}
+
+    result    = {}
+    cur_hdr   = None
+    cur_rows  = []
+    schema_idx = 0   # which schema entry we are currently matching
+
+    def _flush_and_extract():
+        nonlocal schema_idx
+        if not cur_hdr or not cur_rows or schema_idx >= len(table_schema):
+            return
+        tbl = table_schema[schema_idx]
+        schema_idx += 1
+
+        if tbl["is_tax_summary"]:
+            return  # handled elsewhere
+
+        safe_col_map = tbl["safe_col_map"]
+        for row_idx, row in enumerate(cur_rows, start=1):
+            row_flat = " ".join(c.lower() for c in row if c)
+            # Skip total/subtotal footer rows
+            if re.match(r'^\s*(total|subtotal|grand total|sub total)\s*$', row_flat.strip()):
+                continue
+            for safe_name, col_idx in safe_col_map.items():
+                if not safe_name:
+                    continue
+                cell = row[col_idx].strip() if col_idx < len(row) else ""
+                result[f"{safe_name}_{row_idx}"] = cell if cell else "N/A"
+
+    for row in table_rows:
+        row = [c.strip() if c else "" for c in row]
+        if _is_header_row(row):
+            _flush_and_extract()
+            cur_hdr  = row
+            cur_rows = []
+        elif cur_hdr:
+            non_empty = [c for c in row if c]
+            if len(non_empty) >= 2:
+                cur_rows.append(row)
+
+    _flush_and_extract()
+    return result
+
+
+def extract_line_items_from_tables(table_rows: list[list]) -> dict[str, str]:
+    """
+    One-shot extraction of ALL line items without a pre-built schema.
+    Used for PATH B (LLM per PDF / different templates) and as a fallback.
+    Returns { "Description_1": "...", "Qty_2": "...", ... }
+    """
+    schema = build_table_schema(table_rows)
+    return _apply_table_schema(table_rows, schema)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1027,9 +1542,8 @@ def extract_value_smart(text_bundle, table_rows: list[list], field: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def groq_chat(prompt: str) -> str:
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="GROQ_API_KEY not set in .env file.")
+    api_key = await _next_groq_key()
+    key_hint = f"...{api_key[-6:]}"   # last 6 chars for log tracing only
 
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
@@ -1054,17 +1568,17 @@ async def groq_chat(prompt: str) -> str:
             },
         )
 
+    logger.info("Groq call via key %s → HTTP %s", key_hint, response.status_code)
     data = response.json()
     if response.status_code != 200:
         error_msg = data.get("error", {}).get("message", f"Groq API returned HTTP {response.status_code}")
-        raise HTTPException(status_code=500, detail=f"Groq error: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Groq error (key {key_hint}): {error_msg}")
     if "error" in data:
         raise HTTPException(status_code=500, detail=data["error"].get("message", "Groq API error"))
     if not data.get("choices"):
         raise HTTPException(status_code=500, detail=f"Groq returned no choices. Response: {data}")
 
     message = data["choices"][0]["message"]
-    # Some reasoning models return content as None/empty — fall back to reasoning field
     content = message.get("content") or ""
     if not content.strip():
         content = message.get("reasoning") or ""
@@ -1073,129 +1587,467 @@ async def groq_chat(prompt: str) -> str:
     return content
 
 
-async def detect_fields_llm(text: str) -> list:
-    """Use Groq LLM to detect all key-value pairs from document text."""
-    raw = await groq_chat(f"""Extract every labeled field from the document below.
+async def detect_fields_llm(text: str, table_rows: list[list] = None) -> list:
+    """Use Groq LLM to detect all key-value pairs from document text,
+    then append table line-item fields detected purely via Python."""
+    raw = await groq_chat(f"""You are a senior chartered accountant and GST compliance expert preparing data for a statutory audit and GST return filing.
 
-CRITICAL RULES — follow exactly:
-1. The "key" MUST be the EXACT label text as it appears in the document — do NOT rename, rephrase, or translate it.
-   - If the document says "Invoice No." → key must be "Invoice No." (not "Invoice Number")
-   - If the document says "GSTIN No:" → key must be "GSTIN No" (not "Vendor GSTIN" or "GST Number")
-   - If the document says "Place of Supply or Services:" → key must be "Place of Supply or Services"
-2. The "value" must be the exact value from the document.
-3. For fields with no label (e.g. company name on line 2, address at the bottom), use a clear positional key like "Seller Company Name" or "Seller Address".
-4. For table data (tax amounts, rates), use column header text as the key.
-5. Be exhaustive — extract every field you can find including:
-   - All labeled lines (Label: Value format)
-   - Company names, addresses
-   - All table columns (amounts, rates, periods)
-   - Footer fields (PAN, GSTIN, HSN/SAC, place of supply, TDS note)
+You are reviewing a tax invoice document. Your task is to identify and extract EVERY data field present.
+Accuracy is critical — this data feeds directly into GST filings and audit trails.
+
+STEP 1 — IDENTIFY PARTIES BEFORE EXTRACTING ANYTHING:
+Every invoice has exactly two parties. Identify them from their section labels:
+
+  SELLER (supplier) = issues the invoice, gets paid
+    Section labels: "From:", "Bill From:", "Supplier:", or company name printed at the TOP of the invoice
+    Their GSTIN is in the "From" section or labeled "Seller GSTIN" / "From GSTIN"
+
+  BUYER (recipient) = receives the invoice, makes the payment
+    Section labels: "Bill to:", "To:", "Ship to:", "Buyer:"
+    Their GSTIN is in the "Bill to" section or labeled "Buyer GSTIN"
+
+  ⚠️  NEVER swap these two parties — it causes GST return mismatches and tax notices.
+  Example: if the document shows "Bill to: ANALOG LEGALHUB" then ANALOG LEGALHUB = BUYER (not seller).
+  Example: if the document shows "From: CTRL S CONNECTIVITY" then CTRL S CONNECTIVITY = SELLER (not buyer).
+
+STEP 2 — EXTRACTION RULES:
+1. The "key" MUST be the exact label text from the document. Do NOT rename or rephrase.
+   - "Invoice No." → key is "Invoice No." (not "Invoice Number")
+   - "GSTIN No:" → key is "GSTIN No" (not "Vendor GSTIN")
+   Exception: for unlabeled positional fields, assign these standard keys — correctly mapped to party:
+   "Seller Company Name", "Seller Address", "Buyer Company Name", "Buyer Address"
+2. Value must be exact as printed. Do not reformat amounts, dates, or codes.
+3. For table columns (CGST, SGST, IGST, taxable value, total) use the column header as key.
+4. Extract everything — both parties' details, all tax amounts, all footer fields.
+5. When the same label appears for both parties (e.g. two GSTINs, two PANs):
+   Label them "Seller GSTIN" and "Buyer GSTIN" (or "Seller PAN" / "Buyer PAN") based on which section they appear in.
+6. Do NOT include section headers ("Tax Invoice", "Billing Details", "Transaction Details") — no value to extract.
+7. Do NOT include line-item product rows — handled separately.
+8. Values must be concise — not paragraphs or multi-line blobs.
 
 Return ONLY a valid JSON array — no markdown, no explanation:
-[{{"key": "exact label from PDF", "value": "exact value from PDF"}}, ...]
+[{{"key": "label", "value": "value"}}, ...]
 
-DOCUMENT:
+INVOICE DOCUMENT:
 {text[:6000]}""")
 
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     result  = json.loads(cleaned)
-    return result if isinstance(result, list) else []
+    fields  = result if isinstance(result, list) else []
+
+    # ── Append table line-item fields (pure Python, zero LLM calls) ──────────
+    # These look like "Description_1", "Qty_2" etc. in the UI field selector.
+    if table_rows:
+        line_items = extract_line_items_from_tables(table_rows)
+        seen = set()
+        for key, value in line_items.items():
+            if key not in seen:
+                seen.add(key)
+                fields.append({"key": key, "value": value})
+
+    return fields
 
 
 async def extract_fields_llm(text: str, fields: list) -> dict:
     """Use Groq LLM to extract specific fields from document text."""
-    raw = await groq_chat(f"""Extract the following fields from the document below.
+    # Normalise: fields may be strings or dicts
+    field_strs = [f if isinstance(f, str) else f.get("key", str(f)) for f in fields]
+    fields_quoted = chr(10).join(f'  "{f}"' for f in field_strs)
 
-CRITICAL RULES:
-1. Fields ending in " 1" (e.g. "Invoice Number 1") refer to the FIRST invoice/page. Extract only from that section.
-2. Fields ending in " 2" (e.g. "Invoice Number 2") refer to the SECOND invoice/page. Extract only from that section.
-3. A bare field like "Date" with no number means find it anywhere in the document.
-4. Return the EXACT value as it appears in the document — do not add extra text.
-5. If a field is genuinely not found, return "N/A".
-6. For two-column lines (e.g. "Invoice Number: X   Date: Y"), extract only the value for the requested field label, not the whole line.
+    raw = await groq_chat(f"""You are a senior chartered accountant and GST compliance expert with 20+ years of experience in invoice auditing and tax filing.
 
-Fields to extract:
-{chr(10).join(f"- {f}" for f in fields)}
+You have been handed a tax invoice document and must extract specific fields from it with absolute precision.
+This data will be used directly for GST filing and statutory audit — errors have legal and financial consequences.
 
-Return ONLY a valid JSON object with no markdown or explanation:
-{{"Field Name": "value", ...}}
+CRITICAL PARTY IDENTIFICATION — READ THIS FIRST:
+An invoice has exactly two parties. You MUST identify them correctly before extracting anything:
 
-DOCUMENT:
+  SELLER (supplier) = the company ISSUING the invoice = the one getting paid
+    Identified by labels: "From:", "Bill From:", "Supplier:", "We/Our company", or the company name at the TOP of the invoice
+    Their GSTIN is labeled "Seller GSTIN", "From GSTIN", "Supplier GSTIN", or GSTIN in the "From" section
+    Their address is in the "From" / "Bill From" section
+
+  BUYER (recipient) = the company RECEIVING the invoice = the one paying
+    Identified by labels: "Bill to:", "To:", "Buyer:", "Ship to:"
+    Their GSTIN is labeled "Buyer GSTIN", "GSTIN" in the "Bill to" section
+    Their address is in the "Bill to" / "To" section
+
+  NEVER swap these. A buyer labeled as seller in a GST return causes a notice from the tax department.
+  If you see "Bill to: ANALOG LEGALHUB" — ANALOG LEGALHUB is the BUYER, not the seller.
+  If you see "From: CTRL S CONNECTIVITY" — CTRL S CONNECTIVITY is the SELLER, not the buyer.
+
+YOUR RESPONSIBILITIES:
+- First identify which party is the seller and which is the buyer using the labels above
+- Then map all requested fields to the correct party
+- For fields like GSTIN, PAN, IRN, HSN — verify the format (GSTIN=15 chars, PAN=10 chars)
+- For duplicate labels (e.g. two GSTINs) — always map to the correct party, not just the first occurrence
+- Return amounts exactly as shown — do not round, convert, or reformat
+- For multi-line addresses — capture the complete address, not just the first line
+
+EXTRACTION RULES:
+1. JSON keys MUST match the requested field names EXACTLY (same spelling, same capitalisation)
+2. "Seller *" fields belong to the FROM/supplier party. "Buyer *" fields belong to the BILL TO/recipient party
+3. Fields ending in "_occ1" or " 1" = first occurrence in document order
+   Fields ending in "_occ2" or " 2" = second occurrence in document order
+4. Two-column lines like "Invoice Date: X   Due Date: Y" — return ONLY the value for the exact label. Stop at 2+ spaces
+5. Return values exactly as they appear in the document
+6. If genuinely not present, return "N/A". Never fabricate values.
+
+Requested fields (copy these EXACT strings as JSON keys):
+{fields_quoted}
+
+Return ONLY a valid JSON object — no markdown, no explanation, no preamble.
+
+INVOICE DOCUMENT:
 {text[:8000]}""")
 
     cleaned = raw.replace("```json", "").replace("```", "").strip()
-    result  = json.loads(cleaned)
-    return result if isinstance(result, dict) else {}
+    try:
+        result = json.loads(cleaned)
+    except json.JSONDecodeError:
+        logger.warning("extract_fields_llm: JSON parse failed — returning N/A for all fields")
+        return {f: "N/A" for f in field_strs}
+
+    if not isinstance(result, dict):
+        return {f: "N/A" for f in field_strs}
+
+    # Remap keys case-insensitively so minor capitalisation differences don't break things
+    result_lower = {k.lower().strip(): v for k, v in result.items()}
+    remapped = {}
+    for f in field_strs:
+        if f in result:
+            remapped[f] = result[f]
+        elif f.lower().strip() in result_lower:
+            remapped[f] = result_lower[f.lower().strip()]
+        else:
+            remapped[f] = "N/A"
+    return remapped
 
 
-async def generate_schema_llm(sample_text: str, fields: list[str]) -> dict:
+async def _fix_schema_llm(
+    bad_schema: dict,
+    mismatch_info: str,
+    sample_text: str,
+    left_text: str = "",
+    right_text: str = ""
+) -> dict:
     """
-    Ask the LLM to generate a JSON regex schema for extracting fields.
-
-    Instead of writing Python code (which LLMs often get wrong by hardcoding
-    values), we ask the LLM to supply one regex pattern per field as JSON.
-    WE run re.search() ourselves in _run_schema() — the LLM never executes code.
-
-    CRITICAL RULES enforced by the prompt:
-    - Patterns must be GENERIC (label-anchored), never hardcoded values
-    - Use [^\\n]+ for single-line values (not .+ which with re.DOTALL spans lines)
-    - For values split across two lines (e.g. "Jan'202\\n6"), use two capture groups
-    - For fields after "TO," block, chain multiple \\n anchors to find the right line
-
-    Returns: { "Field Name": "regex_pattern", ... }
+    Ask the LLM to fix ONLY the broken regex patterns.
+    Working patterns are kept in Python — never sent to LLM — saving tokens
+    and preventing the LLM from accidentally modifying correct patterns.
     """
-    fields_block = "\n".join(f'  "{f}"' for f in fields)
-    clean_sample = "\n".join(line.strip() for line in sample_text.split("\n"))[:4000]
+    clean = "\n".join(l.strip() for l in sample_text.split("\n") if l.strip())[:5000]
 
-    raw = await groq_chat(f"""You are a regex pattern generator for PDF data extraction.
+    # Parse broken field names from mismatch_info lines like:
+    #   "FieldName": want="X" got="Y" | PDF line: '...'
+    broken_fields = set()
+    for line in mismatch_info.split("\n"):
+        line = line.strip()
+        # Strip any leading emoji/spaces
+        line = re.sub(r'^[\s❌✅⚠️]+', '', line).strip()
+        if line.startswith('"'):
+            name = line.lstrip('"').split('"')[0]
+            if name:
+                broken_fields.add(name)
 
-I have a flattened PDF text (one value per line, leading/trailing whitespace stripped)
-and a list of fields to extract. Write ONE Python regex pattern per field.
+    # Only the broken patterns go to the LLM
+    broken_only = {k: v for k, v in bad_schema.items() if k in broken_fields}
+    # Working patterns stay in Python — never sent to LLM
+    working_schema = {k: v for k, v in bad_schema.items() if k not in broken_fields}
 
-SAMPLE PDF TEXT (exact content, line by line):
+    logger.info(
+        "_fix_schema_llm: sending %d broken patterns to LLM, keeping %d working patterns in Python",
+        len(broken_only), len(working_schema)
+    )
+
+    if not broken_only:
+        logger.warning("_fix_schema_llm: no broken fields parsed from mismatch_info — returning unchanged schema")
+        return bad_schema
+
+    broken_patterns_str = "\n".join(
+        f'  "{k}": {v!r}' for k, v in broken_only.items()
+    )
+    broken_fields_str = "\n".join(
+        f'  "{f}"' for f in sorted(broken_fields)
+    )
+
+    raw = await groq_chat(rf"""Fix the broken regex patterns below.
+Only these {len(broken_only)} patterns are broken. Do NOT touch any others.
+
+## PDF TEXT:
+---
+{clean}
+---
+
+## WHAT WENT WRONG — each line: field name, expected value, what the pattern returned, actual PDF line:
+{mismatch_info}
+
+## THE BROKEN PATTERNS TO FIX:
+{broken_patterns_str}
+
+## YOUR TASK:
+Rewrite each broken pattern so it correctly extracts the expected value.
+Apply the same rules as before:
+- Double all backslashes: \\s \\d \\w \\n (not single \s \d \w \n)
+- Stop at two-column boundary: use (?=\\s{{2,}}|$)
+- Generic patterns only — not hardcoded to this PDF's specific values
+- Look at the actual PDF line shown for each field and write the pattern for what you see
+
+## RETURN:
+A JSON object with ONLY the fixed fields — nothing else:
+{{"field name": "fixed_pattern", ...}}
+
+Fields that need fixing:
+{broken_fields_str}
+
+Return ONLY the JSON. No markdown. No explanation.""")
+
+    cleaned = raw.strip()
+    for fence in ["```json", "```"]:
+        if cleaned.startswith(fence):
+            cleaned = cleaned[len(fence):]
+    cleaned = cleaned.rstrip("```").strip()
+
+    def _fix_escapes(s: str) -> str:
+        valid = frozenset(chr(34) + chr(92) + "/bfnrtu")
+        out, i = [], 0
+        while i < len(s):
+            if s[i] == chr(92) and i + 1 < len(s):
+                out.append(s[i] if s[i+1] in valid else chr(92) + chr(92))
+                i += 1
+            else:
+                out.append(s[i])
+            i += 1
+        return "".join(out)
+
+    try:
+        result = json.loads(cleaned)
+    except json.JSONDecodeError:
+        try:
+            result = json.loads(_fix_escapes(cleaned))
+        except json.JSONDecodeError as e:
+            logger.warning("_fix_schema_llm JSON parse failed: %s — keeping original schema", e)
+            return bad_schema
+
+    if not isinstance(result, dict):
+        logger.warning("_fix_schema_llm: LLM returned non-dict — keeping original schema")
+        return bad_schema
+
+    # Merge: start with ALL original patterns (working ones preserved)
+    # then override only the fields the LLM was asked to fix
+    merged = {**bad_schema}
+    fixed_count = 0
+    for k, v in result.items():
+        if isinstance(v, str) and "(" in v:
+            merged[k] = v
+            fixed_count += 1
+
+    logger.info(
+        "_fix_schema_llm: LLM fixed %d/%d broken patterns — total schema: %d patterns",
+        fixed_count, len(broken_only), len(merged)
+    )
+    return merged
+
+
+async def generate_schema_llm(sample_text: str, fields: list[str],
+                              left_text: str = "",
+                              right_text: str = "") -> dict:
+    """
+    Generate regex patterns for each field.
+    Uses full text as primary source. Left/right columns shown as supplementary
+    context only for fields that appear in both columns (duplicates).
+    """
+    full_lines_clean = [l.strip() for l in sample_text.split("\n") if l.strip()]
+    clean_sample     = "\n".join(full_lines_clean)[:7000]
+
+    # Build right-column lines for supplementary context on duplicate fields
+    right_lines_clean = [l.strip() for l in right_text.split("\n") if l.strip()] if right_text else []
+    right_col_text    = "\n".join(right_lines_clean)[:2000]
+
+    # ── Per-field context: show the exact PDF line where each value appears ──
+    # Also build a value lookup from the fields list (detect-fields LLM output)
+    # so we can find positional fields that have no label in the text.
+    field_value_lookup = {}
+    if isinstance(fields, list):
+        for f in fields:
+            if isinstance(f, dict) and "key" in f and "value" in f:
+                v = str(f.get("value", "")).strip()
+                if v and v != "N/A":
+                    field_value_lookup[f["key"]] = v
+
+    field_contexts = []
+    full_lines     = full_lines_clean
+
+    for field in fields:
+        # fields can be a list of dicts or plain strings
+        field_key = field["key"] if isinstance(field, dict) else field
+
+        occ_match   = re.match(r'^(.+)_occ(\d+)$', field_key)
+        base_label  = occ_match.group(1) if occ_match else field_key
+        occ_idx     = int(occ_match.group(2)) if occ_match else 1
+        label_lower = base_label.lower()
+
+        # Step 1: Find lines containing the label text
+        matching_lines = []
+        for idx, line in enumerate(full_lines):
+            if label_lower in line.lower():
+                ctx = line
+                if idx + 1 < len(full_lines):
+                    ctx += " | NEXT: " + full_lines[idx + 1]
+                matching_lines.append((idx, ctx))
+
+        # Step 2: If label not found, search by VALUE — find which line contains it
+        # and show the PREVIOUS line as structural context (the anchor)
+        if not matching_lines:
+            known_val = field_value_lookup.get(field_key, "")
+            if known_val and len(known_val) > 3:
+                for idx, line in enumerate(full_lines):
+                    if known_val.lower()[:30] in line.lower():
+                        # Show preceding line (anchor) → this line (value)
+                        prev = full_lines[idx - 1] if idx > 0 else ""
+                        nxt  = full_lines[idx + 1] if idx + 1 < len(full_lines) else ""
+                        ctx  = f"[PREV LINE: {prev!r}] → VALUE ON THIS LINE: {line!r}"
+                        if nxt:
+                            ctx += f" | NEXT: {nxt!r}"
+                        matching_lines.append((idx, ctx))
+                        break
+
+        # For _occ2+ fields, also check right-column text
+        right_note = ""
+        if occ_idx >= 2 and right_lines_clean:
+            right_hits = [l for l in right_lines_clean if label_lower in l.lower()]
+            if right_hits:
+                right_note = f" [RIGHT COLUMN LINE: {right_hits[0]!r}]"
+
+        if matching_lines:
+            # Pick the Nth occurrence
+            pair = matching_lines[occ_idx - 1] if occ_idx - 1 < len(matching_lines) else matching_lines[-1]
+            pick = pair[1]
+        else:
+            pick = "(not found in text)"
+
+        occ_note = f" [occurrence {occ_idx} of {len(matching_lines)}]" if occ_match else ""
+        field_contexts.append(
+            f'  "{field_key}" (label="{base_label}{occ_note}"): {pick}{right_note}'
+        )
+
+    field_context_block = "\n".join(field_contexts)
+    fields_block = "\n".join(
+        f'  "{f["key"] if isinstance(f, dict) else f}"' for f in fields
+    )
+
+    raw = await groq_chat(rf"""You are an expert regex pattern generator for structured document data extraction.
+
+## THE DOCUMENT TEXT:
 ---
 {clean_sample}
 ---
 
-FIELDS TO EXTRACT:
+## EACH FIELD AND THE EXACT LINE WHERE ITS VALUE APPEARS:
+{field_context_block}
+
+## YOUR TASK:
+Write ONE Python regex pattern per field that extracts its value from any document with the same layout.
+Return ONLY a valid JSON object: {{"Field Name": "pattern", ...}}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULE 1 ─ BACKSLASH ESCAPING  (the #1 cause of broken patterns)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+In JSON strings, every regex backslash must be written as \\\\ (four chars in source = two backslashes).
+✅ CORRECT:  "Invoice:\\\\s*(\\\\S+)"
+❌ WRONG:    "Invoice:\s*(\S+)"    ← invalid JSON, pattern silently returns nothing
+
+Every regex token must be doubled:
+  \\\\s  \\\\d  \\\\w  \\\\n  \\\\S  \\\\D  \\\\W  \\\\.  \\\\(  \\\\)  \\\\b  \\\\+  \\\\*  \\\\?
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULE 2 ─ LOOK AT THE ACTUAL LINE. WRITE WHAT YOU SEE.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Each field above shows you the EXACT line it appears on. Use that line to write the pattern.
+Do not guess. Do not use the field name as if it were a label if it has no label in the text.
+
+STEP-BY-STEP for each field:
+  1. Look at the line shown: "Invoice Number: I0625NG000064469  PacketID: 8303285326"
+  2. Identify what separates the label from the value: colon, space, etc.
+  3. Identify what ends the value: newline, or 2+ spaces if another field follows on the same line
+  4. Write the pattern accordingly
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULE 3 ─ STOP AT TWO-COLUMN BOUNDARIES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+If a line has TWO fields separated by 2+ spaces, you MUST stop at the boundary:
+  Line: "Invoice Number: I0625NG  PacketID: 8303285326"
+  ✅  "Invoice Number:\\\\s*([^\\\\n]*?)(?=\\\\s{{2,}}|$)"   ← stops before PacketID
+  ❌  "Invoice Number:\\\\s*([^\\\\n]+)"                  ← grabs the whole line
+
+Use (?=\\\\s{{2,}}|$) whenever a value might have another field to its right.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULE 4 ─ GENERIC PATTERNS ONLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Patterns run on OTHER documents with the SAME LAYOUT but DIFFERENT values.
+  ✅  "Invoice Number:\\\\s*(\\\\S+)"   ← matches any invoice number
+  ❌  "I0625NG000064469"              ← hardcoded, breaks on every other document
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULE 5 ─ PATTERN TEMPLATES BY SITUATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Choose the template that matches what you see in the actual line:
+
+  [A] Label: Value   (value goes to end of line)
+      "Label Name:\\\\s*([^\\\\n]+)"
+
+  [B] Label: Value   (another field follows on the same line after 2+ spaces)
+      "Label Name:\\\\s*([^\\\\n]*?)(?=\\\\s{{2,}}|\\\\n|$)"
+
+  [C] Date or multi-word value with right-column neighbour
+      "Invoice Date:\\\\s*([\\\\d\\\\w\\\\s\\\\-\\/,]+?)(?=\\\\s{{2,}}|\\\\n|$)"
+
+  [D] Value follows label on the NEXT line
+      "Label Name:\\\\s*\\\\n([^\\\\n]+)"
+
+  [E] Single-word or code value (no spaces in value)
+      "Label:\\\\s*(\\\\S+)"
+
+  [F] Numeric amount with currency prefix  e.g. "Sub Total : 3,000.00"
+      "Sub Total\\\\s*:\\\\s*([\\\\d,\\.]+)"
+
+  [G] Percentage  e.g. "IGST(18%) : 540.00"
+      "IGST\\\\(?([\\\\d\\.]+)%\\\\)?\\\\s*:\\\\s*([\\\\d,\\.]+)"
+
+  [H] Fixed-format code (GSTIN=15 chars, PAN=10, IRN=64 hex chars)
+      "GSTIN\\\\s*:\\\\s*(\\\\S{{15}})"
+      "IRN\\\\s*:\\\\s*([a-f0-9]{{64}})"
+
+  [I] Value is Nth number on a data row  e.g. amounts in a table row
+      Use surrounding context: "TOTAL\\\\s+([\\\\d,\\.]+)\\\\s+[\\\\d,\\\\.]+"
+      Or anchor to line start:  "^(\\\\d+)\\\\s+Rs" for quantity
+
+
+  [J] POSITIONAL field — value has NO label, appears at a fixed structural position.
+      The context shows: [PREV LINE: 'anchor'] -> VALUE ON THIS LINE: 'value'
+      Use the ANCHOR LINE (prev line) to write the pattern, NOT the field name:
+        Seller name after "TAX INVOICE":         "TAX INVOICE\\\\s*\\\\n([^\\\\n]+)"
+        Seller address after "Authorised Signatory": "Authorised Signatory\\\\s*\\\\n([^\\\\n]+)"
+        Buyer name after "TO,":                  "TO,\\\\s*\\\\n([^\\\\n]+)"
+      NEVER try to match the field name itself if it is not in the document.
+
+  [K] Nth OCCURRENCE of a repeated label (context shows [occurrence 2 of 2])
+      For occ1: normal pattern matches the first occurrence automatically.
+      For occ2: anchor to something unique that appears ONLY near the second value:
+        e.g. State Code appears twice; occ2 is near "GSTIN: 09...":
+          "GSTIN:\\\\s*09[^\\\\n]*\\\\n(?:[^\\\\n]*\\\\n)?State Code[:\\\\s]*(\\\\S+)"
+        Or use re.findall approach: capture ALL occurrences and pick Nth in _run_schema.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULE 6 ─ EVERY FIELD GETS A PATTERN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Write a pattern for every field. Never omit one. If unsure, write your best guess.
+
+## FIELDS — one pattern each:
 {fields_block}
 
-STRICT RULES — follow exactly or the patterns will break on other PDFs:
-
-1. Return ONLY a valid JSON object: {{"field name": "regex_pattern", ...}}
-
-2. Patterns run with re.IGNORECASE | re.MULTILINE. NOT re.DOTALL.
-   This means "." does NOT match newlines. Use [^\\n]+ for single-line values.
-
-3. NEVER hardcode specific values. Patterns must match the LABEL, not the value.
-   CORRECT: "Invoice No\\.:\\s*(\\S+)"     ← matches any invoice number
-   WRONG:   "FY26/Jan26/03486"             ← breaks on every other PDF
-
-4. For simple "Label: Value" lines, use:  "Label Name:\\s*([^\\n]+)"
-   or for word-only values:               "Label Name:\\s*(\\S+)"
-
-5. For values that come after "TO," (buyer block), chain \\n anchors:
-   - Line after TO,:      "TO,\\s*\\n([^\\n]+)"       → Buyer Company Name
-   - Two lines after TO,: "TO,\\s*\\n[^\\n]+\\n([^\\n]+)"  → Buyer Address
-   - City-Pincode line:   "TO,\\s*\\n[^\\n]+\\n[^\\n]+\\n([\\w][\\w\\s]+?)-\\d{{5,6}}"
-   - Pincode only:        "TO,\\s*\\n[^\\n]+\\n[^\\n]+\\n[\\w][\\w\\s]+-(\\d{{5,6}})"
-   - State (before INDIA):"TO,\\s*\\n[^\\n]+\\n[^\\n]+\\n[^\\n]+\\n([^\\n]+)\\nINDIA"
-
-6. For values split across two lines (e.g. a period code "Jan'202" on one line 
-   and "6" on the next), use TWO capture groups: "(Jan'202)[^\\n]*\\n(\\d)"
-   The system will concatenate them automatically.
-
-7. For the Seller Company Name (no label): "TAX INVOICE\\s*\\n([^\\n]+)"
-8. For Seller Address (after "Authorised Signatory"): "Authorised Signatory\\s*\\n([^\\n]+)"
-9. For fields like "GSTIN No:VALUE" (no space around colon): "GSTIN No:(\\S+)"
-10. For amounts in a data row (positional): use the row identifier then count 
-    space-separated number tokens:
-    "^GSSJAN26PO\\s+Jan'202\\d?\\s+([\\d,]+\\.[\\d]+)"  → first amount = Value of Services
-    "^GSSJAN26PO\\s+Jan'202\\d?\\s+[\\d,\\.]+\\s+([\\d,]+\\.[\\d]+)"  → second amount = CGST
-    ... and so on positionally
-
-Return ONLY the JSON — no markdown, no explanation:
-{{"field name": "regex_pattern", ...}}
+Return ONLY the JSON object starting with {{ and ending with }}.
 """)
 
     cleaned = raw.strip()
@@ -1206,7 +2058,40 @@ Return ONLY the JSON — no markdown, no explanation:
         cleaned = cleaned[:-3]
     cleaned = cleaned.strip()
 
-    result = json.loads(cleaned)
+    # ── Fix invalid escape sequences from LLM ─────────────────────────────────
+    # LLMs sometimes write \s, \d, \n, \w as single backslash in JSON strings
+    # which makes json.loads() crash with "Invalid \escape".
+    # Strategy: try raw parse first, then fix escapes if it fails.
+    def _fix_escapes(s: str) -> str:
+        # Replace bare \x (invalid JSON escapes) with \\x so json.loads works.
+        # Valid JSON escapes: \" \\ \/ \b \f \n \r \t \uXXXX
+        # Invalid (must be doubled): \s \d \w \S \D \W \( \) \. \+ \* \? \^ \[ \] \{ \}
+        valid_esc = set('"' + "\\" + "/" + "bfnrtu")
+        result = []
+        i = 0
+        while i < len(s):
+            if s[i] == "\\" and i + 1 < len(s):
+                next_ch = s[i + 1]
+                if next_ch in valid_esc:
+                    result.append(s[i])
+                else:
+                    result.append("\\\\")
+                i += 1
+            else:
+                result.append(s[i])
+            i += 1
+        return "".join(result)
+
+    try:
+        result = json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        logger.warning("Schema JSON parse failed (%s) — fixing escape sequences", e)
+        try:
+            result = json.loads(_fix_escapes(cleaned))
+            logger.info("Schema JSON parsed successfully after escape fix")
+        except json.JSONDecodeError as e2:
+            raise ValueError(f"Schema LLM returned invalid JSON even after escape fix: {e2}")
+
     if not isinstance(result, dict):
         raise ValueError("Schema LLM returned non-dict")
 
@@ -1214,6 +2099,9 @@ Return ONLY the JSON — no markdown, no explanation:
     valid = {k: v for k, v in result.items()
              if isinstance(v, str) and v.strip() and "(" in v}
     logger.info("Schema generated: %d/%d fields have valid patterns", len(valid), len(fields))
+    # Log every generated pattern so we can see what the LLM produced
+    for k, v in valid.items():
+        logger.info("  Pattern [%s]: %r", k, v)
     return valid
 
 
@@ -1247,7 +2135,7 @@ async def detect_fields(
         file_bytes  = await file.read()
         pages_list  = json.loads(pages) if pages and pages != "[]" else None
         page_count  = get_pdf_page_count(file_bytes)
-        text        = extract_text_from_pdf(file_bytes, pages_list)
+        text, table_rows = extract_text_and_tables_from_pdf(file_bytes, pages_list)
 
         if not text:
             raise HTTPException(
@@ -1257,23 +2145,280 @@ async def detect_fields(
 
         text_str = text.full_all if hasattr(text, 'full_all') else str(text)
 
-        # ── Step 1: Detect all fields via LLM (1 call — always) ────────────────
-        fields = await detect_fields_llm(text_str)
+        # ── Step 1: Detect all fields via LLM + table headers (1 LLM call) ────
+        fields = await detect_fields_llm(text_str, table_rows)
 
-        # ── Step 2: If same_template, generate a reusable extractor (1 call) ──
-        # This extractor runs on every subsequent PDF with zero LLM calls.
+        # ── Step 2: If same_template, generate reusable regex + table schema ──
         extractor_generated = False
-        if same_template.lower() == "true" and session_id and fields:
-            field_keys = [f["key"] for f in fields if isinstance(f, dict) and "key" in f]
-            if field_keys:
-                try:
-                    schema = await generate_schema_llm(text_str, field_keys)
-                    _EXTRACTOR_STORE[session_id] = schema   # store dict of patterns
-                    extractor_generated = True
-                    logger.info("Regex schema generated for session %s (%d/%d fields with patterns)",
-                                session_id, len(schema), len(field_keys))
-                except Exception as e:
-                    logger.warning("Schema generation failed (will fall back to LLM per PDF): %s", e)
+        logger.info(
+            "detect-fields: same_template=%s session_id=%s fields_count=%d",
+            same_template, session_id, len(fields)
+        )
+
+        # Detect garbled PDF text (font encoding issues) — skip schema, force LLM
+        text_is_garbled = _is_garbled_text(text_str)
+        if text_is_garbled:
+            logger.warning(
+                "⚠️  Garbled text detected for session %s (font encoding issue) — "
+                "schema generation skipped. All PDFs will use LLM extraction.",
+                session_id
+            )
+            if session_id:
+                _EXTRACTOR_STORE[session_id] = {
+                    "regex": {}, "tables": [], "schema_validated": False,
+                    "llm_fallback": True, "key_meta": {}, "failed_fields": set(),
+                    "garbled": True,
+                }
+
+        if same_template.lower() == "true" and session_id and fields and not text_is_garbled:
+            # Build set of table column headers (from pdfplumber tables)
+            _table_col_headers: set[str] = set()
+            if table_rows:
+                for _row in table_rows:
+                    if _is_header_row([c.strip() if c else "" for c in _row]):
+                        for _cell in _row:
+                            if _cell and _cell.strip():
+                                _table_col_headers.add(_cell.strip().lower())
+
+            # ── Detect table column fields using x-position extraction ────────
+            # For each page, extract column→value map from PDF coordinates.
+            # Fields whose names match a detected column are flagged as table fields
+            # and will be extracted positionally, not by regex.
+            _page_col_maps: list[dict] = []  # one dict per page
+            _table_field_map: dict[str, tuple[int, str]] = {}  # field → (page_idx, col_label)
+
+            try:
+                # Use file_bytes already read at the top of this endpoint
+                _n_pages = get_pdf_page_count(file_bytes)
+
+                for _pi in range(_n_pages):
+                    _col_map = _extract_table_by_xpos(file_bytes, _pi)
+                    _page_col_maps.append(_col_map)
+                    if _col_map:
+                        logger.info(
+                            "Page %d table columns detected: %s", _pi + 1,
+                            list(_col_map.keys())
+                        )
+
+                # Match each detected field to a table column
+                for _f in fields:
+                    if not isinstance(_f, dict) or "key" not in _f:
+                        continue
+                    _fk = _f["key"]
+                    for _pi, _col_map in enumerate(_page_col_maps):
+                        _val = _match_field_to_col(_fk, _col_map)
+                        if _val:
+                            _table_field_map[_fk] = (_pi, _val)
+                            logger.info(
+                                "Field [%s] → table column on page %d → value %r",
+                                _fk, _pi + 1, _val
+                            )
+                            break
+            except Exception as _e:
+                logger.warning("Table field detection failed: %s", _e)
+                _page_col_maps = []
+                _table_field_map = {}
+
+            _inline_table_fields: set[str] = set(_table_field_map.keys())
+
+            # ── Detect duplicate keys and suffix them _occ1, _occ2 etc. ────────
+            # When the same label appears multiple times (e.g. "State Code" for buyer
+            # AND seller), we create distinct schema keys so each gets its own pattern.
+            # e.g. ["State Code", "State Code"] → ["State Code_occ1", "State Code_occ2"]
+            raw_field_keys = [
+                f["key"] for f in fields
+                if isinstance(f, dict) and "key" in f
+                and not re.match(r'^.+_\d+$', f["key"])
+                and f["key"].lower().strip() not in _table_col_headers
+                and f["key"] not in _inline_table_fields  # column-position extracted
+
+            ]
+            key_count: dict[str, int] = {}
+            for k in raw_field_keys:
+                key_count[k] = key_count.get(k, 0) + 1
+
+            key_seen: dict[str, int] = {}
+            text_field_keys = []
+            # Maps schema key → (original key, occurrence index) for later remapping
+            schema_key_meta: dict[str, tuple[str, int]] = {}
+            for k in raw_field_keys:
+                key_seen[k] = key_seen.get(k, 0) + 1
+                if key_count[k] > 1:
+                    schema_key = f"{k}_occ{key_seen[k]}"
+                    schema_key_meta[schema_key] = (k, key_seen[k])
+                    if key_seen[k] == 1:
+                        logger.info(
+                            "Duplicate key detected: \"%s\" appears %d times — "
+                            "will generate separate patterns (_occ1, _occ2, ...)",
+                            k, key_count[k]
+                        )
+                else:
+                    schema_key = k
+                    schema_key_meta[schema_key] = (k, 1)
+                text_field_keys.append(schema_key)
+
+            try:
+                table_schema = build_table_schema(table_rows)
+
+                # LLM output for PDF 1 — remap to suffixed keys so validation works
+                # For duplicate keys, LLM returns [{key: "State Code", value: "09"}, ...]
+                # We need to split these into _occ1 → first value, _occ2 → second value
+                _raw_llm_output: dict[str, list] = {}
+                for f in fields:
+                    if not isinstance(f, dict) or "key" not in f:
+                        continue
+                    k = f["key"]
+                    _raw_llm_output.setdefault(k, []).append(f.get("value", "N/A"))
+
+                llm_output: dict[str, str] = {}
+                _occ_seen: dict[str, int] = {}
+                for schema_key, (orig_key, occ_idx) in schema_key_meta.items():
+                    vals = _raw_llm_output.get(orig_key, ["N/A"])
+                    llm_output[schema_key] = vals[occ_idx - 1] if occ_idx - 1 < len(vals) else "N/A"
+
+                # ── Self-validating schema: generate → test → fix (up to 2 retries) ──
+                regex_schema     = {}
+                schema_validated = False
+                last_mismatch    = ""
+
+                for attempt in range(3):
+                    # Generate or fix schema
+                    if attempt == 0:
+                        regex_schema = await generate_schema_llm(
+                            text_str, text_field_keys,
+                            left_text=text.left if hasattr(text, "left") else "",
+                            right_text=text.right if hasattr(text, "right") else ""
+                        ) if text_field_keys else {}
+                    else:
+                        # Build retry prompt with exact PDF lines for each mismatch
+                        regex_schema = await _fix_schema_llm(
+                            regex_schema, last_mismatch, text_str,
+                            left_text=text.left if hasattr(text, "left") else "",
+                            right_text=text.right if hasattr(text, "right") else ""
+                        )
+
+                    # Test schema against PDF 1 (compare vs LLM ground truth)
+                    schema_result = _run_schema(
+                        regex_schema, text_str, text_field_keys,
+                        table_rows=table_rows, table_schema=table_schema,
+                        left_text=text.left if hasattr(text, "left") else ""
+                    )
+
+                    # ── Per-field pass/fail evaluation ───────────────────────
+                    text_lines = [l.strip() for l in text_str.split("\n") if l.strip()]
+                    passed     = []   # fields where schema matched LLM output
+                    mismatches = []   # fields where schema was wrong
+
+                    for fk in text_field_keys:
+                        llm_val    = str(llm_output.get(fk, "N/A")).strip()
+                        schema_val = str(schema_result.get(fk, "N/A")).strip()
+
+                        if llm_val in ("N/A", ""):
+                            # LLM itself couldn't find it — skip from scoring
+                            continue
+
+                        if schema_val != "N/A" and llm_val.lower() in schema_val.lower():
+                            passed.append(f'  ✅ "{fk}": schema="{schema_val}"')
+                        else:
+                            ctx = next(
+                                (ln for ln in text_lines
+                                 if llm_val.lower() in ln.lower() or fk.lower() in ln.lower()),
+                                "(label/value not on a single line)"
+                            )
+                            mismatches.append(
+                                f'  ❌ "{fk}": want="{llm_val}" got="{schema_val}" | PDF line: {ctx!r}'
+                            )
+
+                    total_scored = len(passed) + len(mismatches)
+                    match_pct    = len(passed) / max(total_scored, 1)
+
+                    # ── Log full per-field breakdown ──────────────────────────
+                    logger.info(
+                        "Schema validation attempt %d: %d/%d fields correct (%.0f%%)",
+                        attempt + 1, len(passed), total_scored, match_pct * 100
+                    )
+                    if passed:
+                        logger.info(
+                            "Schema attempt %d — PASSED fields (regex matched LLM output):\n%s",
+                            attempt + 1, "\n".join(passed)
+                        )
+                    if mismatches:
+                        logger.warning(
+                            "Schema attempt %d — FAILED fields (will trigger retry/fallback):\n%s",
+                            attempt + 1, "\n".join(mismatches)
+                        )
+
+                    if match_pct >= 0.85:
+                        schema_validated = True
+                        logger.info(
+                            "✅ Schema ACCEPTED on attempt %d (%d/%d fields correct) "
+                            "— will use regex for all remaining PDFs",
+                            attempt + 1, len(passed), total_scored
+                        )
+                        break
+
+                    # Keep clean format: "FieldName": want="X" got="Y" | PDF line: '...'
+                    last_mismatch = "\n".join(
+                        re.sub(r'^\s*[❌✅]\s*', '', m).strip()
+                        for m in mismatches
+                    )
+                    logger.info(
+                        "last_mismatch passed to retry:\n%s", last_mismatch
+                    )
+                    logger.warning(
+                        "Schema attempt %d REJECTED (%.0f%% < 85%% threshold) — %s",
+                        attempt + 1, match_pct * 100,
+                        "retrying with fix prompt" if attempt < 2 else "switching to LLM fallback"
+                    )
+
+                # Collect failed fields (original key names, not _occ suffixed)
+                # These are schema keys that failed on the last attempt
+                failed_schema_keys = set(
+                    re.sub(r'^(.+)_occ\d+$', r'\1', m.strip().lstrip('"').split('"')[0])
+                    for m in mismatches
+                    if m.strip().startswith('"') or m.strip().startswith('❌')
+                )
+                # Also include original key names via key_meta
+                failed_orig_keys = set()
+                for schema_key in failed_schema_keys:
+                    if schema_key in schema_key_meta:
+                        failed_orig_keys.add(schema_key_meta[schema_key][0])
+                    else:
+                        failed_orig_keys.add(schema_key)
+
+                if not schema_validated:
+                    logger.warning(
+                        "⚠️  Schema FAILED after 3 attempts for session %s\n"
+                        "    Failed fields: %s\n"
+                        "    If user selects any of these → LLM. Otherwise → regex.",
+                        session_id, sorted(failed_orig_keys)
+                    )
+                else:
+                    if failed_orig_keys:
+                        logger.info(
+                            "Schema ACCEPTED but %d fields had issues: %s\n"
+                            "    If user selects any of these → LLM. Otherwise → regex.",
+                            len(failed_orig_keys), sorted(failed_orig_keys)
+                        )
+
+                _EXTRACTOR_STORE[session_id] = {
+                    "regex":               regex_schema,
+                    "tables":              table_schema,
+                    "schema_validated":    schema_validated,
+                    "llm_fallback":        not schema_validated,
+                    "key_meta":            schema_key_meta,
+                    "failed_fields":       failed_orig_keys,
+                    "table_field_map":     _table_field_map,
+
+                }
+                extractor_generated = True
+                logger.info(
+                    "Session %s: schema_validated=%s regex=%d table=%d",
+                    session_id, schema_validated, len(regex_schema), len(table_schema)
+                )
+
+            except Exception as e:
+                logger.warning("Schema generation failed (will fall back to LLM per PDF): %s", e)
 
         return {
             "fields":               fields,
@@ -1318,23 +2463,181 @@ async def extract_fields(
 
         text_str = text.full_all if hasattr(text, 'full_all') else str(text)
 
-        schema = _EXTRACTOR_STORE.get(session_id) if session_id else None
+        stored = _EXTRACTOR_STORE.get(session_id) if session_id else None
 
-        if use_same and isinstance(schema, dict) and schema:
-            # ── PATH A: Regex schema (zero LLM calls) ─────────────────────────
-            extracted = _run_schema(schema, text_str, fields_list)
-            mode = "schema"
+        logger.info(
+            "extract-fields: session=%s use_same=%s stored_type=%s keys_in_store=%s",
+            session_id, use_same,
+            type(stored).__name__,
+            list(stored.keys()) if isinstance(stored, dict) else "N/A"
+        )
 
-            # Safety net: if >80% N/A, fall back to LLM
-            na_count = sum(1 for v in extracted.values() if v == "N/A")
-            if na_count > len(fields_list) * 0.8:
-                logger.warning("Schema returned %d/%d N/A for session %s — LLM fallback",
-                               na_count, len(fields_list), session_id)
+        if isinstance(stored, dict) and "regex" in stored:
+            regex_schema  = stored["regex"]
+            table_schema  = stored.get("tables", [])
+            llm_fallback         = stored.get("llm_fallback", False)
+            key_meta             = stored.get("key_meta", {})
+            failed_fields        = stored.get("failed_fields", set())
+            text_garbled         = stored.get("garbled", False)
+            table_field_map      = stored.get("table_field_map", {})  # field→(page_idx, val_pdf1)
+            if text_garbled:
+                use_same = False
+                logger.info(
+                    "⚠️  Garbled PDF session — extracting [%s] via LLM (font encoding issue)",
+                    file.filename
+                )
+        elif isinstance(stored, dict):
+            regex_schema  = stored
+            table_schema  = []
+            llm_fallback  = False
+            key_meta      = {}
+            failed_fields = set()
+        else:
+            regex_schema  = {}
+            table_schema  = []
+            llm_fallback  = False
+            key_meta      = {}
+            failed_fields = set()
+
+        logger.info(
+            "extract-fields: regex_schema=%d patterns, table_schema=%d tables, "
+            "llm_fallback=%s, failed_fields=%s",
+            len(regex_schema), len(table_schema), llm_fallback, sorted(failed_fields)
+        )
+
+        # ── Smart fallback: field-level check always takes priority ────────────
+        # Runs regardless of global llm_fallback value.
+        # If user selected ONLY fields that passed schema → use regex.
+        # If user selected ANY field that failed schema  → use LLM.
+        if failed_fields:
+            requested_set = set(fields_list)
+            overlap = requested_set & failed_fields
+            if overlap:
+                use_same = False
+                logger.warning(
+                    "⚡ LLM fallback for [%s] — %d selected field(s) failed schema: %s",
+                    file.filename, len(overlap), sorted(overlap)
+                )
+            else:
+                use_same = True
+                logger.info(
+                    "✅ Regex for [%s] — all selected field(s) passed schema "
+                    "(failed fields not selected: %s)",
+                    file.filename, sorted(failed_fields)
+                )
+        elif llm_fallback:
+            # No field-level info available, global flag says LLM
+            use_same = False
+            logger.info(
+                "⚡ LLM fallback for [%s] — schema failed globally",
+                file.filename
+            )
+
+        if use_same and (regex_schema or table_schema):
+            # ── PATH A: Regex + Table schema (zero LLM calls) ─────────────────
+            # Run schema using the internal schema keys (may include _occ1/_occ2 variants)
+            # fields_list from frontend uses original keys — build internal key list
+            internal_keys = list(regex_schema.keys()) + [
+                k for k in fields_list if k not in regex_schema
+            ]
+            extracted_internal = _run_schema(
+                regex_schema, text_str, internal_keys,
+                table_rows=table_rows,
+                table_schema=table_schema,
+                left_text=text.left if hasattr(text, 'left') else "",
+            )
+
+            # ── Extract table column fields by x-position for this PDF ────────
+            if table_field_map:
+                for _fk, (_pi, _pdf1_val) in table_field_map.items():
+                    _col_map = _extract_table_by_xpos(file_bytes, _pi)
+                    _val = _match_field_to_col(_fk, _col_map)
+                    if _val:
+                        extracted_internal[_fk] = _val
+                        logger.info(
+                            "Table column extracted: [%s] page %d → %r", _fk, _pi + 1, _val
+                        )
+                    else:
+                        logger.info(
+                            "Table column [%s] not found on page %d of this PDF", _fk, _pi + 1
+                        )
+
+            # Remap _occ schema keys back to original field names expected by frontend
+            # key_meta: {"State Code_occ1": ("State Code", 1), "State Code_occ2": ("State Code", 2)}
+            # Frontend sends originals: ["State Code"] → backend must return {"State Code": val_of_occ1}
+            # The _occ2 value is returned as "State Code__2" so frontend Nth-occurrence logic can use it
+            occ_vals: dict[str, list] = {}  # orig_key → [val_occ1, val_occ2, ...]
+            for schema_key, (orig_key, occ_idx) in key_meta.items():
+                val = extracted_internal.get(schema_key, "N/A")
+                bucket = occ_vals.setdefault(orig_key, [])
+                # Insert at correct position (occ_idx is 1-based)
+                while len(bucket) < occ_idx:
+                    bucket.append("N/A")
+                bucket[occ_idx - 1] = val
+
+            extracted = dict(extracted_internal)  # start with all values
+            # Replace _occ keys with originals
+            for schema_key in list(extracted.keys()):
+                if schema_key in key_meta:
+                    del extracted[schema_key]
+            for orig_key, vals in occ_vals.items():
+                extracted[orig_key] = vals[0] if vals else "N/A"
+                # Extra occurrences stored with double-underscore suffix for frontend
+                for i, v in enumerate(vals[1:], start=2):
+                    extracted[f"{orig_key}__{i}"] = v
+
+            if key_meta:
+                logger.info(
+                    "Remapped %d _occ schema keys back to original field names: %s",
+                    len(key_meta),
+                    {sk: ok for sk, (ok, _) in key_meta.items()}
+                )
+
+            # Post-process: if any value looks like a table header row
+            # (contains 3+ column keywords), it means the regex matched the
+            # header instead of a data cell — replace with N/A and re-extract
+            # from table_rows directly
+            TABLE_COL_KEYWORDS = {"cgst","sgst","igst","total","amount","rate","utgst","tax","value","invoice"}
+            for field, val in list(extracted.items()):
+                if val and val != "N/A":
+                    val_lower = val.lower()
+                    hits = sum(1 for kw in TABLE_COL_KEYWORDS if kw in val_lower)
+                    if hits >= 3:
+                        # Looks like a header row — try to get value from table directly
+                        extracted[field] = _get_field_from_table(field, table_rows) or "N/A"
+            mode = "generated_extractor"
+
+            # Safety net: if >80% N/A on TEXT fields only (exclude table _N fields
+            # which legitimately may be N/A if table structure differs), fall back to LLM
+            text_fields  = [f for f in fields_list if not re.match(r'^.+_\d+$', f) and not re.match(r'^.+__\d+$', f)]
+            na_text      = sum(1 for f in text_fields if extracted.get(f) == "N/A")
+            na_threshold = len(text_fields) * 0.4 if text_fields else 0  # 40% threshold — trigger LLM sooner
+
+            logger.info(
+                "extract-fields PATH A: %d/%d text fields are N/A (threshold %.0f)",
+                na_text, len(text_fields), na_threshold
+            )
+
+            if text_fields and na_text > na_threshold:
+                logger.warning(
+                    "Schema returned %d/%d text-field N/As for session %s — LLM fallback",
+                    na_text, len(text_fields), session_id
+                )
                 extracted = await extract_fields_llm(text_str, fields_list)
+                # Still merge table line items even in fallback
+                line_items = _apply_table_schema(table_rows, table_schema) if table_schema \
+                             else extract_line_items_from_tables(table_rows)
+                for f in fields_list:
+                    if re.match(r'^.+_\d+$', f) and (extracted.get(f, "N/A") == "N/A"):
+                        extracted[f] = line_items.get(f, "N/A")
                 mode = "llm_fallback"
         else:
-            # ── PATH B: LLM per PDF ───────────────────────────────────────────
-            extracted = await extract_fields_llm(text_str, fields_list)
+            # ── PATH B: LLM per PDF + pure-Python table extraction ────────────
+            extracted  = await extract_fields_llm(text_str, fields_list)
+            line_items = extract_line_items_from_tables(table_rows)
+            for f in fields_list:
+                if re.match(r'^.+_\d+$', f) and (extracted.get(f, "N/A") == "N/A"):
+                    extracted[f] = line_items.get(f, "N/A")
             mode = "llm"
 
         # Case-insensitive key remapping
@@ -1364,7 +2667,7 @@ async def extract_fields(
 @app.delete("/api/session/{session_id}")
 async def clear_session(session_id: str):
     """Drop the generated extractor from memory. Frontend calls this after all
-    PDFs in a batch are done — keeps the store from growing indefinitely."""
+    PDFs in a batch are done -- keeps the store from growing indefinitely."""
     dropped = _EXTRACTOR_STORE.pop(session_id, None)
     return {"cleared": dropped is not None, "session_id": session_id}
 
@@ -1386,9 +2689,10 @@ async def raw_text(file: UploadFile = File(...)):
 async def health():
     return {
         "status": "ok",
-        "groq_key_configured": bool(os.getenv("GROQ_API_KEY")),
+        "groq_keys_configured": len(GROQ_API_KEYS),
+        "groq_key_pool": [f"...{k[-6:]}" for k in GROQ_API_KEYS],
         "pdf_library": "pdfplumber",
-        "modes": ["regex (same template)", "llm (different templates)"],
+        "modes": ["regex+table_schema (same template)", "llm (different templates)"],
     }
 
 
