@@ -6,8 +6,16 @@ import traceback
 import httpx
 import pdfplumber
 from io import BytesIO
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+import sqlite3
+import time
+import urllib.parse
+from pathlib import Path
+
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
+from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,12 +25,140 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="DocParse API")
 
+# ── Session middleware (required by Authlib for OAuth state/nonce) ────────────
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SECRET_KEY", "CHANGE_ME_IN_PRODUCTION"),
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000", "http://localhost:5500",
+        "http://127.0.0.1:5500", "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        os.getenv("FRONTEND_URL", "*"),
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DATABASE  (SQLite — swap for PostgreSQL via asyncpg in production)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+DB_PATH = Path(os.getenv("DB_PATH", "docmind_users.db"))
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                google_id     TEXT    UNIQUE NOT NULL,
+                email         TEXT    UNIQUE NOT NULL,
+                name          TEXT,
+                picture       TEXT,
+                first_login   INTEGER NOT NULL,
+                last_login    INTEGER NOT NULL,
+                login_count   INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+        conn.commit()
+    logger.info("DB ready at %s", DB_PATH)
+
+init_db()
+
+def upsert_user(google_id: str, email: str, name: str, picture: str) -> dict:
+    now = int(time.time())
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT * FROM users WHERE google_id = ?", (google_id,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE users SET last_login=?, login_count=login_count+1, name=?, picture=? WHERE google_id=?",
+                (now, name, picture, google_id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO users (google_id,email,name,picture,first_login,last_login,login_count) VALUES (?,?,?,?,?,?,1)",
+                (google_id, email, name, picture, now, now),
+            )
+        conn.commit()
+        row = conn.execute("SELECT * FROM users WHERE google_id=?", (google_id,)).fetchone()
+    logger.info("User upserted: %s login_count=%d", email, row["login_count"])
+    return dict(row)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GOOGLE OAUTH 2.0
+# ═══════════════════════════════════════════════════════════════════════════════
+
+BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:3001")
+FRONTEND_URL     = os.getenv("FRONTEND_URL",     "http://localhost:5500")
+
+oauth = OAuth()
+oauth.register(
+    name="google",
+    client_id=os.getenv("GOOGLE_CLIENT_ID"),
+    client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
+
+@app.get("/auth/google")
+async def auth_google(request: Request):
+    redirect_uri = f"{BACKEND_BASE_URL}/auth/google/callback"
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+@app.get("/auth/google/callback")
+async def auth_google_callback(request: Request):
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    except Exception as e:
+        logger.error("OAuth callback error: %s", e)
+        return RedirectResponse(f"{FRONTEND_URL}?error=oauth_failed")
+
+    userinfo = token.get("userinfo") or {}
+    if not userinfo:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://openidconnect.googleapis.com/v1/userinfo",
+                headers={"Authorization": f"Bearer {token['access_token']}"},
+            )
+            userinfo = resp.json()
+
+    google_id = userinfo.get("sub")
+    email     = userinfo.get("email", "")
+    name      = userinfo.get("name", "")
+    picture   = userinfo.get("picture", "")
+
+    if not google_id or not email:
+        return RedirectResponse(f"{FRONTEND_URL}?error=missing_user_info")
+
+    upsert_user(google_id, email, name, picture)
+
+    params = urllib.parse.urlencode({
+        "sso_success": "1",
+        "name": name,
+        "email": email,
+        "picture": picture,
+    })
+    return RedirectResponse(f"{FRONTEND_URL}?{params}")
+
+@app.get("/admin/users")
+async def list_users():
+    """List all SSO users — protect or remove before going to production!"""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id,email,name,first_login,last_login,login_count FROM users ORDER BY last_login DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL   = "llama-3.3-70b-versatile"

@@ -3,364 +3,633 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DocMind — PDF to Excel & Invoice Extractor for Business & Finance Teams</title>
-  <meta name="description" content="Extract invoices, tables and data from PDF to Excel or CSV in seconds. Bulk PDF to Excel converter for business and finance teams. Invoice extractor, PDF data extraction tool." />
-  <meta name="keywords" content="pdf to excel, invoice extractor, pdf invoice extractor, extract invoice from pdf, bulk pdf converter, pdf to csv, pdf data extraction, invoice to excel" />
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <title>DocMind — AI Agents for Finance & Legal Workflows</title>
+  <meta name="description" content="AI agents to automate finance and legal workflows. Extract invoices, tables & data from PDF to Excel or CSV in seconds." />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,400;0,700;0,900;1,300&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script defer src="/_vercel/insights/script.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'DM Sans', sans-serif; background: #f8fafc; color: #1e293b; min-height: 100vh; }
+    :root {
+      --ink: #0d1117; --ink-2: #3d4451; --ink-3: #6b7280;
+      --paper: #f7f5f0; --white: #ffffff;
+      --teal: #0a7c6e; --teal-l: #0e9e8d; --teal-xl: #d1f0ec;
+      --border: #e5e1d8; --shadow: 0 2px 16px rgba(13,17,23,0.08);
+    }
+    html { scroll-behavior: smooth; }
+    body { font-family: 'DM Sans', sans-serif; background: var(--paper); color: var(--ink); min-height: 100vh; overflow-x: hidden; }
 
-    header { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 14px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 3px rgba(0,0,0,0.05); position: sticky; top: 0; z-index: 10; }
-    .logo { display: flex; align-items: center; gap: 10px; }
-    .logo-icon { width: 36px; height: 36px; background: #2563eb; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 18px; overflow: hidden; }
-    .logo-name { font-family: 'Playfair Display', serif; font-weight: 800; font-size: 18px; color: #0f172a; letter-spacing: -0.02em; }
-    .logo-sub { font-size: 10px; color: #94a3b8; letter-spacing: 0.1em; text-transform: uppercase; }
-    .mode-badge { font-size: 11px; font-weight: 600; padding: 5px 14px; border-radius: 20px; border: 1px solid; display: none; }
-    .mode-badge.regex { background: #f0fdf4; color: #16a34a; border-color: #bbf7d0; }
-    .mode-badge.llm   { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+    /* NAV */
+    nav { position: sticky; top: 0; z-index: 100; background: rgba(247,245,240,0.94); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); padding: 0 32px; height: 64px; display: flex; align-items: center; justify-content: space-between; }
+    .nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo-icon { width: 34px; height: 34px; background: var(--teal); border-radius: 8px; display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; }
+    .nav-logo-name { font-family: 'Fraunces', serif; font-weight: 700; font-size: 20px; color: var(--ink); letter-spacing: -0.03em; }
+    .nav-logo-badge { font-size: 10px; color: var(--teal); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin-left: 6px; background: var(--teal-xl); padding: 2px 8px; border-radius: 20px; }
+    .nav-cta { background: var(--ink); color: var(--white); border: none; border-radius: 8px; padding: 9px 22px; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .nav-cta:hover { background: var(--teal); }
 
-    main { max-width: 780px; margin: 0 auto; padding: 48px 24px; }
+    /* HERO */
+    .hero-section { max-width: 1100px; margin: 0 auto; padding: 80px 32px 60px; display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
+    .hero-tag { font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--teal); margin-bottom: 18px; }
+    .hero-h1 { font-family: 'Fraunces', serif; font-size: clamp(36px, 4vw, 52px); font-weight: 900; line-height: 1.08; letter-spacing: -0.03em; color: var(--ink); margin-bottom: 22px; }
+    .hero-h1 em { font-style: italic; color: var(--teal); }
+    .hero-p { font-size: 17px; line-height: 1.7; color: var(--ink-2); margin-bottom: 32px; max-width: 420px; }
+    .hero-btns { display: flex; gap: 12px; flex-wrap: wrap; }
+    .btn-primary { background: var(--teal); color: #fff; border: none; border-radius: 10px; padding: 13px 28px; font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px; }
+    .btn-primary:hover { background: var(--teal-l); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(10,124,110,0.25); }
+    .btn-outline { background: transparent; color: var(--ink); border: 1.5px solid var(--border); border-radius: 10px; padding: 12px 24px; font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-decoration: none; display: inline-block; }
+    .btn-outline:hover { border-color: var(--teal); color: var(--teal); }
+    .hero-stats { background: var(--white); border: 1px solid var(--border); border-radius: 20px; padding: 32px; box-shadow: var(--shadow); }
+    .hero-stats-title { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 20px; }
+    .stat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .stat-item { padding: 18px; background: var(--paper); border-radius: 12px; }
+    .stat-num { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 900; color: var(--teal); letter-spacing: -0.03em; line-height: 1; }
+    .stat-label { font-size: 12px; color: var(--ink-3); margin-top: 4px; line-height: 1.4; }
 
-    .hero { text-align: center; margin-bottom: 48px; }
-    .hero h1 { font-family: 'Playfair Display', serif; font-size: 40px; font-weight: 800; color: #0f172a; line-height: 1.15; letter-spacing: -0.03em; margin-bottom: 14px; }
-    .hero h1 span { color: #2563eb; }
-    .hero p { color: #64748b; font-size: 16px; max-width: 480px; margin: 0 auto; line-height: 1.6; }
+    /* SECTIONS */
+    .divider { height: 1px; background: var(--border); max-width: 1100px; margin: 0 auto 60px; }
+    .section { max-width: 1100px; margin: 0 auto; padding: 0 32px 80px; }
+    .section-tag { font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--teal); margin-bottom: 10px; }
+    .section-h2 { font-family: 'Fraunces', serif; font-size: clamp(28px, 3vw, 40px); font-weight: 800; line-height: 1.15; letter-spacing: -0.03em; color: var(--ink); margin-bottom: 14px; }
+    .section-sub { font-size: 16px; color: var(--ink-2); line-height: 1.65; max-width: 560px; margin-bottom: 48px; }
 
-    /* Steps */
-    .steps { display: flex; align-items: center; justify-content: center; margin-bottom: 32px; flex-wrap: nowrap; gap: 2px; overflow: hidden; }
+    /* VALUE CARDS */
+    .value-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .value-card { background: var(--white); border: 1px solid var(--border); border-radius: 16px; padding: 28px; transition: all 0.2s; }
+    .value-card:hover { border-color: var(--teal); box-shadow: var(--shadow); transform: translateY(-2px); }
+    .value-icon { font-size: 28px; margin-bottom: 14px; }
+    .value-title { font-family: 'Fraunces', serif; font-size: 18px; font-weight: 700; color: var(--ink); margin-bottom: 8px; letter-spacing: -0.02em; }
+    .value-desc { font-size: 14px; color: var(--ink-2); line-height: 1.65; }
+
+    /* WORKFLOW GRID */
+    .workflow-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .workflow-item { display: flex; align-items: flex-start; gap: 14px; background: var(--white); border: 1px solid var(--border); border-radius: 14px; padding: 20px; transition: border-color 0.2s; }
+    .workflow-item:hover { border-color: var(--teal); }
+    .workflow-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); margin-top: 6px; flex-shrink: 0; }
+    .workflow-title { font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 3px; }
+    .workflow-desc { font-size: 12px; color: var(--ink-3); line-height: 1.5; }
+
+    /* SPOTLIGHT */
+    .spotlight-wrap { padding: 0 32px; max-width: 1164px; margin: 0 auto 80px; }
+    .spotlight { background: var(--ink); border-radius: 24px; padding: 56px; display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+    .spotlight-tag { font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--teal-l); margin-bottom: 10px; }
+    .spotlight-h2 { font-family: 'Fraunces', serif; font-size: clamp(26px, 2.5vw, 36px); font-weight: 800; color: #fff; line-height: 1.15; letter-spacing: -0.03em; margin-bottom: 14px; }
+    .spotlight-p { font-size: 15px; color: #9ca3af; line-height: 1.7; margin-bottom: 24px; }
+    .spotlight-benefits { list-style: none; margin-bottom: 32px; display: flex; flex-direction: column; gap: 10px; }
+    .spotlight-benefits li { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #d1d5db; }
+    .spotlight-benefits li::before { content: '✓'; color: var(--teal-l); font-weight: 700; flex-shrink: 0; }
+    .btn-try { background: var(--teal); color: #fff; border: none; border-radius: 10px; padding: 14px 32px; font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px; }
+    .btn-try:hover { background: var(--teal-l); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(10,124,110,0.4); }
+    .tool-preview { background: #1a2233; border-radius: 16px; padding: 24px; border: 1px solid #2d3748; }
+    .tool-preview-header { display: flex; align-items: center; gap: 6px; margin-bottom: 18px; }
+    .tp-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .tp-label { font-size: 12px; color: #6b7280; margin-left: 6px; }
+    .tool-step { background: #0d1117; border-radius: 10px; padding: 13px 16px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; border: 1px solid #2d3748; }
+    .ts-num { width: 22px; height: 22px; border-radius: 50%; background: var(--teal); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .ts-text { font-size: 13px; color: #d1d5db; flex: 1; }
+    .ts-badge { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; flex-shrink: 0; }
+    .badge-ai { background: rgba(14,158,141,0.2); color: var(--teal-l); }
+    .badge-fast { background: rgba(251,191,36,0.15); color: #fbbf24; }
+    .tool-output { background: #0d1117; border-radius: 8px; padding: 10px 14px; font-size: 11px; color: #6ee7b7; font-family: monospace; border: 1px solid #2d3748; margin-top: 4px; }
+
+    /* MODAL */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(13,17,23,0.72); backdrop-filter: blur(6px); z-index: 1000; display: none; align-items: center; justify-content: center; padding: 20px; }
+    .modal-overlay.active { display: flex; }
+    .modal { background: var(--white); border-radius: 24px; padding: 48px 40px; max-width: 420px; width: 100%; box-shadow: 0 24px 80px rgba(13,17,23,0.25); text-align: center; position: relative; }
+    .modal-close { position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border); background: transparent; cursor: pointer; font-size: 16px; color: var(--ink-3); display: flex; align-items: center; justify-content: center; transition: all 0.15s; line-height: 1; }
+    .modal-close:hover { background: var(--paper); }
+    .modal-icon { font-size: 36px; margin-bottom: 14px; }
+    .modal-h { font-family: 'Fraunces', serif; font-size: 24px; font-weight: 800; color: var(--ink); margin-bottom: 8px; letter-spacing: -0.03em; }
+    .modal-sub { font-size: 14px; color: var(--ink-3); line-height: 1.6; margin-bottom: 28px; }
+    .google-btn { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; padding: 14px; border: 1.5px solid var(--border); border-radius: 12px; background: var(--white); cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 600; color: var(--ink); transition: all 0.2s; margin-bottom: 14px; }
+    .google-btn:hover { border-color: var(--teal); box-shadow: 0 4px 12px rgba(10,124,110,0.12); }
+    .modal-spam { font-size: 12px; color: var(--ink-3); display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .modal-divider { height: 1px; background: var(--border); margin: 20px 0; }
+    .modal-feature { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); padding: 5px 0; text-align: left; }
+    .modal-feature::before { content: '✓'; color: var(--teal); font-weight: 700; flex-shrink: 0; }
+
+    /* APP */
+    #app-section { display: none; }
+    #app-section.active { display: block; }
+    .app-shell { max-width: 860px; margin: 0 auto; padding: 32px 24px 80px; }
+    .app-user-bar { display: flex; align-items: center; justify-content: space-between; background: var(--white); border: 1px solid var(--border); border-radius: 12px; padding: 12px 20px; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .app-user-info { display: flex; align-items: center; gap: 10px; }
+    .app-user-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--teal); color: #fff; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .app-user-name { font-size: 14px; font-weight: 600; color: var(--ink); }
+    .app-user-email { font-size: 12px; color: var(--ink-3); }
+    .app-quota { display: flex; align-items: center; gap: 8px; }
+    .quota-label { font-size: 12px; color: var(--ink-3); }
+    .quota-pips { display: flex; gap: 4px; }
+    .quota-pip { width: 10px; height: 10px; border-radius: 2px; background: var(--teal); transition: background 0.3s; }
+    .quota-pip.used { background: #e5e1d8; }
+    .quota-text { font-size: 12px; font-weight: 600; color: var(--ink); }
+    .app-logout { font-size: 12px; color: var(--ink-3); background: none; border: none; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.15s; }
+    .app-logout:hover { background: var(--paper); color: var(--ink); }
+
+    /* TOOL */
+    .hero-app { text-align: center; margin-bottom: 32px; }
+    .hero-app h1 { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 800; color: var(--ink); line-height: 1.15; letter-spacing: -0.03em; margin-bottom: 10px; }
+    .hero-app h1 span { color: var(--teal); }
+    .hero-app p { color: var(--ink-3); font-size: 15px; max-width: 480px; margin: 0 auto; line-height: 1.6; }
+    .steps { display: flex; align-items: center; justify-content: center; margin-bottom: 28px; flex-wrap: nowrap; gap: 2px; overflow: hidden; }
     .step { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; transition: all 0.3s; background: #f1f5f9; color: #94a3b8; white-space: nowrap; }
-    .step.active { background: #2563eb; color: #fff; }
+    .step.active { background: var(--teal); color: #fff; }
     .step.done { background: #e2e8f0; color: #475569; }
     .step-num { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; background: #cbd5e1; color: #64748b; flex-shrink: 0; }
-    .step.active .step-num { background: #fff; color: #2563eb; }
+    .step.active .step-num { background: #fff; color: var(--teal); }
     .step-line { width: 16px; min-width: 16px; height: 2px; background: #e2e8f0; flex-shrink: 0; }
     .step-line.done { background: #cbd5e1; }
-
-    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 36px; box-shadow: 0 1px 8px rgba(0,0,0,0.06); }
-
+    .card { background: #fff; border: 1px solid var(--border); border-radius: 20px; padding: 36px; box-shadow: var(--shadow); }
     .error-banner { background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 11px 16px; margin-bottom: 20px; font-size: 13px; color: #dc2626; display: none; }
-
-    /* Upload */
     .upload-area { width: 100%; border: 2px dashed #cbd5e1; border-radius: 16px; padding: 60px 24px; display: flex; flex-direction: column; align-items: center; gap: 12px; cursor: pointer; background: #f8fafc; transition: all 0.2s; text-align: center; }
-    .upload-area:hover, .upload-area.drag { border-color: #2563eb; background: #eff6ff; }
+    .upload-area:hover, .upload-area.drag { border-color: var(--teal); background: #f0fdf9; }
     .upload-area .icon { font-size: 48px; }
     .upload-area h3 { color: #334155; font-weight: 600; font-size: 15px; }
     .upload-area p { color: #94a3b8; font-size: 12px; }
     #file-input { display: none; }
-
-    /* Template question */
-    .template-question { margin-top: 28px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 20px 24px; }
-    .template-question h3 { font-size: 14px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+    .template-question { margin-top: 28px; background: #f8fafc; border: 1px solid var(--border); border-radius: 14px; padding: 20px 24px; }
+    .template-question h3 { font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
     .template-question p { font-size: 12px; color: #64748b; margin-bottom: 16px; line-height: 1.5; }
     .template-options { display: flex; gap: 12px; }
     .template-option { flex: 1; padding: 14px 16px; border-radius: 12px; border: 2px solid #e2e8f0; background: #fff; cursor: pointer; transition: all 0.2s; text-align: left; }
-    .template-option:hover { border-color: #93c5fd; background: #eff6ff; }
-    .template-option.selected { border-color: #2563eb; background: #eff6ff; }
+    .template-option:hover { border-color: #6ee7b7; background: #f0fdf9; }
+    .template-option.selected { border-color: var(--teal); background: #f0fdf9; }
     .template-option .opt-icon { font-size: 22px; margin-bottom: 6px; }
-    .template-option .opt-title { font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 3px; }
+    .template-option .opt-title { font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 3px; }
     .template-option .opt-desc { font-size: 11px; color: #64748b; line-height: 1.4; }
-    .template-option .opt-tag { display: inline-block; margin-top: 6px; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+    .opt-tag { display: inline-block; margin-top: 6px; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
     .opt-tag.fast { background: #f0fdf4; color: #16a34a; }
-    .opt-tag.smart { background: #eff6ff; color: #2563eb; }
-
-    /* File list + preview */
+    .opt-tag.smart { background: #f0fdf9; color: var(--teal); }
     .file-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; width: 210px; flex-shrink: 0; }
     .file-item { text-align: left; padding: 9px 12px; border-radius: 8px; font-size: 12px; font-weight: 500; border: 1.5px solid #e2e8f0; background: #fff; color: #64748b; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: all 0.15s; }
-    .file-item.selected { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
+    .file-item.selected { border-color: #6ee7b7; background: #f0fdf9; color: var(--teal); }
     .preview-panel { flex: 1; background: #fff; border-radius: 12px; padding: 20px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; justify-content: space-between; min-height: 200px; }
     .preview-label { font-size: 10px; color: #94a3b8; margin-bottom: 6px; letter-spacing: 0.1em; text-transform: uppercase; }
-    .preview-hint { margin-top: 14px; padding: 10px 14px; border-radius: 8px; border: 1px solid; font-size: 12px; }
-    .preview-hint.llm   { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
-
-    /* Buttons */
-    .btn { padding: 11px 20px; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-weight: 700; font-size: 13px; border: none; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-    .btn-primary { background: #2563eb; color: #fff; width: 100%; }
-    .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
-    .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
-    .btn-secondary { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
-    .btn-secondary:hover { background: #e2e8f0; }
-
-    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    .btn-tool { padding: 11px 20px; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-weight: 700; font-size: 13px; border: none; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+    .btn-tool-primary { background: var(--teal); color: #fff; width: 100%; }
+    .btn-tool-primary:hover:not(:disabled) { background: var(--teal-l); }
+    .btn-tool-primary:disabled { background: #6ee7b7; cursor: not-allowed; opacity: 0.7; }
+    .btn-tool-secondary { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+    .btn-tool-secondary:hover { background: #e2e8f0; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* Fields */
     .fields-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-height: 280px; overflow-y: auto; padding-right: 4px; }
     .field-card { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1.5px solid #e2e8f0; background: #fff; cursor: pointer; transition: all 0.15s; }
-    .field-card.checked { border-color: #93c5fd; background: #eff6ff; }
-    .field-card input { margin-top: 2px; accent-color: #2563eb; flex-shrink: 0; }
-    .field-key { color: #0f172a; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .field-card.checked { border-color: #6ee7b7; background: #f0fdf9; }
+    .field-card input { margin-top: 2px; accent-color: var(--teal); flex-shrink: 0; }
+    .field-key { color: var(--ink); font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .field-val { color: #94a3b8; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    /* Extraction info bar */
     .info-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 10px; font-size: 12px; margin-bottom: 16px; }
     .info-bar.regex { background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; }
-    .info-bar.llm   { background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; }
-
-    /* Progress */
+    .info-bar.llm   { background: #f0fdf9; border: 1px solid #6ee7b7; color: var(--teal); }
     .progress-list { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 14px; }
     .progress-item { display: flex; align-items: center; gap: 12px; }
     .progress-dot { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: #e2e8f0; color: #94a3b8; }
-    .progress-dot.processing { background: #2563eb; color: #fff; }
+    .progress-dot.processing { background: var(--teal); color: #fff; }
     .progress-dot.done { background: #10b981; color: #fff; }
     .progress-bar-wrap { height: 6px; background: #f1f5f9; border-radius: 999px; overflow: hidden; margin-top: 5px; }
-    .progress-bar { height: 100%; border-radius: 999px; width: 0%; transition: width 0.5s ease; background: #3b82f6; }
+    .progress-bar { height: 100%; border-radius: 999px; width: 0%; transition: width 0.5s ease; background: var(--teal); }
     .progress-bar.done { width: 100%; background: #10b981; }
     .progress-bar.processing { width: 60%; }
-
-    /* Table */
     .table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
     table { width: 100%; font-size: 12px; border-collapse: collapse; }
     thead tr { background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
     th { text-align: left; padding: 10px 14px; color: #64748b; font-weight: 600; white-space: nowrap; }
     tbody tr { border-bottom: 1px solid #f1f5f9; }
     tbody tr:nth-child(even) { background: #fafafa; }
-    td { padding: 9px 14px; color: #0f172a; white-space: nowrap; }
+    td { padding: 9px 14px; color: var(--ink); white-space: nowrap; }
     td.na { color: #cbd5e1; }
     td.filename { color: #94a3b8; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
-
     .row { display: flex; gap: 16px; }
     .center { display: flex; flex-direction: column; align-items: center; }
     .text-center { text-align: center; }
     .select-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
     .select-count { font-size: 12px; color: #64748b; }
-    .select-all-btn { font-size: 12px; color: #2563eb; background: none; border: none; cursor: pointer; font-weight: 600; font-family: 'DM Sans', sans-serif; }
+    .select-all-btn { font-size: 12px; color: var(--teal); background: none; border: none; cursor: pointer; font-weight: 600; font-family: 'DM Sans', sans-serif; }
     .custom-field-row { display: flex; gap: 8px; margin-top: 12px; }
-    .custom-input { flex: 1; padding: 9px 12px; border: 1.5px solid #e2e8f0; border-radius: 8px; font-size: 13px; color: #0f172a; outline: none; font-family: 'DM Sans', sans-serif; }
-    .custom-input:focus { border-color: #93c5fd; }
+    .custom-input { flex: 1; padding: 9px 12px; border: 1.5px solid #e2e8f0; border-radius: 8px; font-size: 13px; color: var(--ink); outline: none; font-family: 'DM Sans', sans-serif; }
+    .custom-input:focus { border-color: #6ee7b7; }
     .hidden { display: none !important; }
-    .footer { display: none; }
     .mb-20 { margin-bottom: 20px; }
+    .mode-badge { display: none; }
+
+    /* FOOTER */
+    footer { border-top: 1px solid var(--border); padding: 28px 32px; text-align: center; font-size: 13px; color: var(--ink-3); }
+    footer a { color: var(--teal); text-decoration: none; }
+
+    @media (max-width: 768px) {
+      .hero-section { grid-template-columns: 1fr; gap: 40px; padding: 48px 20px 40px; }
+      .hero-stats { display: none; }
+      .value-grid { grid-template-columns: 1fr; }
+      .workflow-grid { grid-template-columns: 1fr; }
+      .spotlight { grid-template-columns: 1fr; padding: 36px 24px; }
+      .tool-preview { display: none; }
+      .section { padding: 0 20px 60px; }
+      .spotlight-wrap { padding: 0 20px; }
+      nav { padding: 0 20px; }
+    }
   </style>
-  <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
 
-<header>
-  <div class="logo">
-    <div class="logo-icon">
-      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <!-- PDF document base -->
+<nav>
+  <a class="nav-logo" href="#" onclick="goHome(); return false;">
+    <div class="nav-logo-icon">
+      <svg width="20" height="20" viewBox="0 0 22 22" fill="none">
         <rect x="3" y="1" width="12" height="16" rx="2" fill="white" opacity="0.95"/>
-        <rect x="3" y="1" width="12" height="16" rx="2" stroke="white" stroke-opacity="0.3" stroke-width="0.5"/>
-        <!-- Folded corner -->
-        <path d="M11 1 L15 5 L11 5 Z" fill="#2563eb"/>
         <path d="M11 1 L15 5 H11 Z" fill="white" opacity="0.4"/>
-        <!-- Data lines on document -->
-        <rect x="5.5" y="7.5" width="7" height="1.2" rx="0.6" fill="#2563eb" opacity="0.7"/>
-        <rect x="5.5" y="10" width="5" height="1.2" rx="0.6" fill="#2563eb" opacity="0.5"/>
-        <rect x="5.5" y="12.5" width="6" height="1.2" rx="0.6" fill="#2563eb" opacity="0.5"/>
-        <!-- Arrow pointing right (extraction) -->
-        <circle cx="17" cy="16" r="4.5" fill="#1d4ed8"/>
+        <rect x="5.5" y="7.5" width="7" height="1.2" rx="0.6" fill="#0a7c6e" opacity="0.8"/>
+        <rect x="5.5" y="10" width="5" height="1.2" rx="0.6" fill="#0a7c6e" opacity="0.6"/>
+        <rect x="5.5" y="12.5" width="6" height="1.2" rx="0.6" fill="#0a7c6e" opacity="0.6"/>
+        <circle cx="17" cy="16" r="4.5" fill="#0e9e8d"/>
         <path d="M14.8 16 H19.2 M17.5 13.8 L19.7 16 L17.5 18.2" stroke="white" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </div>
+    <span class="nav-logo-name">DocMind</span>
+    <span class="nav-logo-badge">AI Agents</span>
+  </a>
+  <button class="nav-cta" id="nav-cta-btn" onclick="openModal()">Get Early Access</button>
+</nav>
+
+<!-- LANDING -->
+<div id="landing-page">
+
+  <section class="hero-section">
     <div>
-      <div class="logo-name">DocMind</div>
-      <div class="logo-sub">For Business & Finance Teams</div>
+      <div class="hero-tag" style="font-size:13px;font-weight:800;letter-spacing:0.18em;color:var(--white);background:var(--teal);display:inline-block;padding:5px 14px;border-radius:20px;margin-bottom:20px;">For Finance &amp; Legal Teams</div>
+      <h1 class="hero-h1">AI Agents that <em>eliminate</em> manual work.</h1>
+      <p class="hero-p">Automate your finance and legal workflows with AI agents. Reduce TAT, eliminate manual errors, and serve more clients — without growing your team.</p>
+      <div class="hero-btns">
+        <button class="btn-primary" onclick="openModal()">→ Get Early Access</button>
+        <a href="#workflows" class="btn-outline">See Use Cases</a>
+      </div>
+    </div>
+    <div class="hero-stats">
+      <div class="hero-stats-title">Impact at a glance</div>
+      <div class="stat-row">
+        <div class="stat-item"><div class="stat-num">10×</div><div class="stat-label">Faster document processing vs manual</div></div>
+        <div class="stat-item"><div class="stat-num">0</div><div class="stat-label">Manual errors in automated workflows</div></div>
+        <div class="stat-item"><div class="stat-num">5×</div><div class="stat-label">More clients, same headcount</div></div>
+        <div class="stat-item"><div class="stat-num">↓80%</div><div class="stat-label">Reduction in TAT for routine tasks</div></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="section">
+    <div class="section-tag">Why DocMind</div>
+    <h2 class="section-h2">Stop trading hours for output.</h2>
+    <p class="section-sub">Your team's expertise is too valuable for repetitive manual tasks. Our AI agents handle the grunt work so your people focus on what actually moves the needle.</p>
+    <div class="value-grid">
+      <div class="value-card"><div class="value-icon">⚡</div><div class="value-title">Slash your TAT</div><div class="value-desc">Tasks that took days now take minutes. AI agents work around the clock without fatigue, bottlenecks, or handoff delays.</div></div>
+      <div class="value-card"><div class="value-icon">📈</div><div class="value-title">Scale without hiring</div><div class="value-desc">Onboard more clients and handle higher volumes using the same team. Your capacity scales with AI, not headcount.</div></div>
+      <div class="value-card"><div class="value-icon">✅</div><div class="value-title">Eliminate manual errors</div><div class="value-desc">Processes prone to copy-paste mistakes become consistent, auditable, and error-free with automated workflows.</div></div>
+    </div>
+  </section>
+
+  <section id="workflows" class="section">
+    <div class="section-tag">Workflows We Automate</div>
+    <h2 class="section-h2">Built for finance &amp; legal teams.</h2>
+    <p class="section-sub">From invoice processing to audit trails — purpose-built AI agents for the workflows your team runs every day.</p>
+    <div class="workflow-grid">
+      <div class="workflow-item"><div class="workflow-dot"></div><div><div class="workflow-title">Invoice Processing</div><div class="workflow-desc">Ingestion, extraction, 3-way matching and reconciliation at scale.</div></div></div>
+      <div class="workflow-item"><div class="workflow-dot"></div><div><div class="workflow-title">Bookkeeping Automation</div><div class="workflow-desc">GL management, sales register automation, and journal entry generation.</div></div></div>
+      <div class="workflow-item"><div class="workflow-dot"></div><div><div class="workflow-title">Audit Automation</div><div class="workflow-desc">Expense audits, P&amp;L verification, and compliance documentation.</div></div></div>
+      <div class="workflow-item"><div class="workflow-dot"></div><div><div class="workflow-title">AR/AP Management</div><div class="workflow-desc">Automated aging reports, payment workflows, and vendor reconciliation.</div></div></div>
+      <div class="workflow-item"><div class="workflow-dot"></div><div><div class="workflow-title">Tax Compliance</div><div class="workflow-desc">Automated calculations, GST filing prep, and TDS tracking.</div></div></div>
+      <div class="workflow-item"><div class="workflow-dot"></div><div><div class="workflow-title">Financial Reporting</div><div class="workflow-desc">Monthly/quarterly MIS dashboards, report generation, and variance analysis.</div></div></div>
+    </div>
+  </section>
+
+  <div class="spotlight-wrap">
+    <div class="spotlight">
+      <div>
+        <div class="spotlight-tag">Live Product · Free to Try</div>
+        <h2 class="spotlight-h2">Bulk PDF Invoice Extractor</h2>
+        <p class="spotlight-p">Upload hundreds of PDF invoices and get a clean, structured CSV in seconds. No templates to configure. Works on any invoice format — automatically.</p>
+        <ul class="spotlight-benefits">
+          <li>Extract invoice numbers, dates, GSTN, amounts and line items</li>
+          <li>Bulk process — upload multiple PDFs at once</li>
+          <li>Perfect for reconciliation, expense analysis &amp; procurement tracking</li>
+          <li>Fast, accurate extraction powered entirely by AI</li>
+        </ul>
+        <button class="btn-try" onclick="openModal()">Try Now — It's Free →</button>
+      </div>
+      <div class="tool-preview">
+        <div class="tool-preview-header">
+          <div class="tp-dot" style="background:#ef4444"></div>
+          <div class="tp-dot" style="background:#f59e0b"></div>
+          <div class="tp-dot" style="background:#10b981"></div>
+          <span class="tp-label">DocMind Invoice Extractor</span>
+        </div>
+        <div class="tool-step"><div class="ts-num">1</div><div class="ts-text">Upload bulk PDF invoices</div><span class="ts-badge badge-fast">drag &amp; drop</span></div>
+        <div class="tool-step"><div class="ts-num">2</div><div class="ts-text">AI analyses the PDF</div><span class="ts-badge badge-ai">AI ⚡</span></div>
+        <div class="tool-step"><div class="ts-num">3</div><div class="ts-text">Download structured CSV</div><span class="ts-badge badge-ai">ready</span></div>
+        <div class="tool-output">✓ extracted_data.csv · 127 rows · 34 fields</div>
+      </div>
     </div>
   </div>
-  <div class="mode-badge hidden" id="mode-badge"></div>
-</header>
 
-<main>
-  <div class="hero" id="hero">
-    <h1>Extract Structured Data<br /><span>from PDF Files in Bulk</span></h1>
-    <p>Extract invoices, tables & data from PDF to Excel or CSV in seconds. The fastest bulk PDF to Excel converter — perfect for invoice extraction, financial documents, and business data processing.</p>
+</div>
+<!-- END LANDING -->
+
+<!-- MODAL -->
+<div class="modal-overlay" id="sso-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <div class="modal-icon">🔐</div>
+    <div class="modal-h">Try the Invoice Extractor</div>
+    <div class="modal-sub">Sign in with Google to get started. Free to use — no credit card needed.</div>
+    <button class="google-btn" onclick="handleGoogleSignIn()">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+      Continue with Google
+    </button>
+    <div class="modal-spam">🔒 Don't worry, we will not spam you!</div>
+    <div class="modal-divider"></div>
+    <div class="modal-feature">Process up to 5 PDFs per day for free</div>
+    <div class="modal-feature">No credit card · No setup required</div>
+    <div class="modal-feature">Your data is processed securely and never stored</div>
   </div>
+</div>
 
-  <div class="error-banner" id="error-banner"></div>
-
-  <!-- Step indicator -->
-  <div class="steps" id="steps">
-    <div class="step active" id="step-upload"><span class="step-num">1</span> Upload PDFs</div>
-    <div class="step-line" id="line-1"></div>
-    <div class="step" id="step-preview"><span class="step-num">2</span> Preview Document</div>
-    <div class="step-line" id="line-2"></div>
-    <div class="step" id="step-select"><span class="step-num">3</span> Select Fields</div>
-    <div class="step-line" id="line-3"></div>
-    <div class="step" id="step-extract"><span class="step-num">4</span> Extracting</div>
-    <div class="step-line" id="line-4"></div>
-    <div class="step" id="step-download"><span class="step-num">5</span> Download CSV</div>
-  </div>
-
-  <div class="card" id="card">
-
-    <!-- ── STEP 1: Upload + Template Question ── -->
-    <div id="view-upload">
-      <div class="center">
-        <div class="text-center mb-20" style="max-width:500px">
-          <h2 style="font-size:22px;font-weight:700;color:#0f172a;margin-bottom:8px">Upload Your PDFs</h2>
-          <p style="color:#64748b;font-size:14px">Drop all your PDFs at once. We'll preview one and extract fields from all of them.</p>
+<!-- APP -->
+<div id="app-section">
+  <div class="app-shell">
+    <div class="app-user-bar">
+      <div class="app-user-info">
+        <div class="app-user-avatar" id="user-avatar">U</div>
+        <div>
+          <div class="app-user-name" id="user-name">User</div>
+          <div class="app-user-email" id="user-email"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="5f2a2c3a2d1f38323e3633713c3032">[email&#160;protected]</a></div>
         </div>
-
-        <div class="upload-area" id="upload-area" style="max-width:520px">
-          <div class="icon">📂</div>
-          <h3>Drop PDFs here or click to browse</h3>
-          <p>Multiple files supported · PDF only</p>
-          <input type="file" id="file-input" multiple accept=".pdf" />
+      </div>
+      <div class="app-quota">
+        <span class="quota-label">Daily quota:</span>
+        <div class="quota-pips">
+          <div class="quota-pip" id="pip-1"></div>
+          <div class="quota-pip" id="pip-2"></div>
+          <div class="quota-pip" id="pip-3"></div>
+          <div class="quota-pip" id="pip-4"></div>
+          <div class="quota-pip" id="pip-5"></div>
         </div>
+        <span class="quota-text" id="quota-text">5 left today</span>
+      </div>
+      <button class="app-logout" onclick="handleLogout()">Sign out</button>
+    </div>
 
-        <!-- Template question — shown after files selected -->
-        <div class="template-question hidden" id="template-question" style="max-width:520px;width:100%">
-          <h3>📋 Do all your PDFs have the same template?</h3>
-          <p>This helps us choose the fastest and most accurate extraction method for your documents.</p>
-          <div class="template-options">
-            <div class="template-option" id="opt-same" onclick="selectTemplate('same')">
-              <div class="opt-icon">📄📄📄</div>
-              <div class="opt-title">Yes, same template</div>
-              <div class="opt-desc">All PDFs have identical layout — invoices from same vendor, same form, etc.</div>
-            </div>
-            <div class="template-option" id="opt-diff" onclick="selectTemplate('different')">
-              <div class="opt-icon">📄📃🗒️</div>
-              <div class="opt-title">No, different templates</div>
-              <div class="opt-desc">PDFs have different layouts — different vendors, different form types, etc.</div>
-            </div>
+    <div class="hero-app" id="hero">
+      <h1>Extract Structured Data<br/><span>from PDF Files in Bulk</span></h1>
+      <p>Extract invoices, tables &amp; data from PDF to Excel or CSV in seconds. Perfect for invoice extraction, reconciliation, and financial document processing.</p>
+    </div>
+
+    <div class="error-banner" id="error-banner"></div>
+
+    <div class="steps" id="steps">
+      <div class="step active" id="step-upload"><span class="step-num">1</span> Upload PDFs</div>
+      <div class="step-line" id="line-1"></div>
+      <div class="step" id="step-preview"><span class="step-num">2</span> Preview Document</div>
+      <div class="step-line" id="line-2"></div>
+      <div class="step" id="step-select"><span class="step-num">3</span> Select Fields</div>
+      <div class="step-line" id="line-3"></div>
+      <div class="step" id="step-extract"><span class="step-num">4</span> Extracting</div>
+      <div class="step-line" id="line-4"></div>
+      <div class="step" id="step-download"><span class="step-num">5</span> Download CSV</div>
+    </div>
+
+    <div class="card" id="card">
+      <!-- STEP 1 -->
+      <div id="view-upload">
+        <div class="center">
+          <div class="text-center mb-20" style="max-width:500px">
+            <h2 style="font-size:22px;font-weight:700;color:var(--ink);margin-bottom:8px">Upload Your PDFs</h2>
+            <p style="color:#64748b;font-size:14px">Drop all your PDFs at once. We'll preview one and extract fields from all of them.</p>
           </div>
-          <button class="btn btn-primary hidden" id="btn-proceed" style="margin-top:16px" onclick="proceedToPreview()">
-            Continue →
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── STEP 2: Preview ── -->
-    <div id="view-preview" class="hidden">
-      <div class="text-center mb-20">
-        <h2 style="font-size:22px;font-weight:700;color:#0f172a;margin-bottom:6px" id="preview-title">0 PDFs Uploaded</h2>
-        <p style="color:#64748b;font-size:14px">Pick a file to analyze. <strong>AI will be used for this first PDF</strong> to detect all fields accurately.</p>
-      </div>
-      <div class="row">
-        <div class="file-list" id="file-list"></div>
-        <div class="preview-panel">
-          <div>
-            <div class="preview-label">Selected File</div>
-            <div style="color:#0f172a;font-size:14px;font-weight:600" id="preview-name">—</div>
-            <div style="color:#94a3b8;font-size:12px;margin-top:4px" id="preview-size">—</div>
-            <div class="preview-hint llm" style="margin-top:14px;display:none"></div>
+          <div class="upload-area" id="upload-area" style="max-width:520px">
+            <div class="icon">📂</div>
+            <h3>Drop PDFs here or click to browse</h3>
+            <p>Multiple files supported · PDF only</p>
+            <input type="file" id="file-input" multiple accept=".pdf" />
           </div>
-          <button class="btn btn-primary" id="btn-analyze" style="margin-top:16px">✦ Analyse with AI</button>
+          <div class="template-question hidden" id="template-question" style="max-width:520px;width:100%">
+            <h3>📋 Do all your PDFs have the same template?</h3>
+            <p>This helps us choose the fastest and most accurate extraction method.</p>
+            <div class="template-options">
+              <div class="template-option" id="opt-same" onclick="selectTemplate('same')">
+                <div class="opt-icon">📄📄📄</div>
+                <div class="opt-title">Yes, same template</div>
+                <div class="opt-desc">Invoices from the same vendor, same form layout.</div>
+                <span class="opt-tag fast">⚡ Fastest</span>
+              </div>
+              <div class="template-option" id="opt-diff" onclick="selectTemplate('different')">
+                <div class="opt-icon">📄📃🗒️</div>
+                <div class="opt-title">No, different templates</div>
+                <div class="opt-desc">Different vendors, different layouts.</div>
+                <span class="opt-tag smart">🤖 Smart</span>
+              </div>
+            </div>
+            <button class="btn-tool btn-tool-primary hidden" id="btn-proceed" style="margin-top:16px" onclick="proceedToPreview()">Continue →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 2 -->
+      <div id="view-preview" class="hidden">
+        <div class="text-center mb-20">
+          <h2 id="preview-title" style="font-size:20px;font-weight:700;color:var(--ink);margin-bottom:6px"></h2>
+          <p style="color:#64748b;font-size:13px">Pick a file to analyze. <strong>AI will be used for this first PDF</strong> to detect all fields.</p>
+        </div>
+        <div class="row">
+          <div class="file-list" id="file-list"></div>
+          <div class="preview-panel">
+            <div>
+              <div class="preview-label">Selected File</div>
+              <div id="preview-name" style="font-size:15px;font-weight:600;color:var(--ink);margin-bottom:4px;word-break:break-all"></div>
+              <div id="preview-size" style="font-size:12px;color:#94a3b8"></div>
+            </div>
+            <button class="btn-tool btn-tool-primary" id="btn-analyze" style="margin-top:16px">✦ Analyse with AI</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 3 -->
+      <div id="view-select" class="hidden">
+        <div class="info-bar regex hidden" id="info-bar-regex">⚡ <strong>Same template</strong> — AI generates extractor for PDF #1. All remaining PDFs use it instantly (0 API calls).</div>
+        <div class="info-bar llm hidden" id="info-bar-llm">🤖 <strong>Different templates</strong> — AI analyses each PDF individually for maximum accuracy.</div>
+        <div class="select-bar">
+          <span class="select-count"><strong id="field-count">0</strong> fields detected</span>
+          <button class="select-all-btn" id="select-all-btn">Select all</button>
+        </div>
+        <div class="fields-grid" id="fields-grid"></div>
+        <div class="custom-field-row">
+          <input class="custom-input" type="text" id="custom-field-input" placeholder="Add custom field (e.g. PO Number)…" />
+          <button class="btn-tool btn-tool-secondary" onclick="addCustomField()">+ Add</button>
+        </div>
+        <button class="btn-tool btn-tool-primary" id="btn-extract" style="margin-top:16px" disabled>✦ Extract fields from all PDFs</button>
+      </div>
+
+      <!-- STEP 4 -->
+      <div id="view-extract" class="hidden center">
+        <div style="font-size:13px;color:#64748b;margin-bottom:20px" id="extract-status">Processing…</div>
+        <div class="progress-list" id="progress-list"></div>
+      </div>
+
+      <!-- STEP 5 -->
+      <div id="view-download" class="hidden">
+        <div style="margin-bottom:16px">
+          <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:4px">✅ Extraction Complete</div>
+          <div style="font-size:13px;color:#64748b" id="done-summary"></div>
+        </div>
+        <div class="table-wrap mb-20"><table><thead id="result-thead"></thead><tbody id="result-tbody"></tbody></table></div>
+        <div style="display:flex;gap:12px">
+          <button class="btn-tool btn-tool-primary" id="btn-download" style="flex:1">⬇ Download CSV</button>
+          <button class="btn-tool btn-tool-secondary" id="btn-reset">Start Over</button>
         </div>
       </div>
     </div>
-
-    <!-- ── STEP 3: Select Fields ── -->
-    <div id="view-select" class="hidden">
-      <div class="text-center mb-20">
-        <h2 style="font-size:22px;font-weight:700;color:#0f172a;margin-bottom:6px">Select Fields to Extract</h2>
-        <p style="color:#64748b;font-size:14px">LLM detected <strong id="field-count">0</strong> fields from the preview PDF. Choose which to include in the CSV.</p>
-      </div>
-
-      <!-- Info bar showing which mode will be used for remaining PDFs -->
-      <div class="info-bar hidden" id="info-bar-regex">
-        ⚡ <strong>Same template detected</strong> — AI will generate a custom extractor for PDF #1. All remaining PDFs use it instantly (no more API calls).
-      </div>
-      <div class="info-bar hidden" id="info-bar-llm">
-        🤖 <strong>Different templates</strong> — each PDF will be processed individually using Groq LLM.
-      </div>
-
-      <div class="select-bar">
-        <span class="select-count" id="select-count">0 of 0 selected</span>
-        <button class="select-all-btn" id="btn-toggle-all">Select All</button>
-      </div>
-      <div class="fields-grid" id="fields-grid"></div>
-      <div class="custom-field-row">
-        <input class="custom-input" id="custom-input" placeholder="Add custom field (e.g. TDS Rate)…" />
-        <button class="btn btn-secondary" id="btn-add-custom">+ Add</button>
-      </div>
-      <button class="btn btn-primary" id="btn-extract" style="margin-top:16px" disabled>✦ Extract fields from all PDFs</button>
-    </div>
-
-    <!-- ── STEP 4: Extracting ── -->
-    <div id="view-extract" class="hidden center">
-      <div class="text-center mb-20" style="padding-top:8px">
-        <h2 style="font-size:22px;font-weight:700;color:#0f172a;margin-bottom:6px">Extracting Data</h2>
-        <p style="color:#64748b;font-size:14px" id="extract-status">Processing documents…</p>
-      </div>
-      <div class="progress-list" id="progress-list"></div>
-    </div>
-
-    <!-- ── STEP 5: Download ── -->
-    <div id="view-download" class="hidden">
-      <div class="text-center mb-20">
-        <div style="font-size:44px;margin-bottom:10px">🎉</div>
-        <h2 style="font-size:22px;font-weight:700;color:#0f172a;margin-bottom:6px">Extraction Complete!</h2>
-        <p style="color:#64748b;font-size:14px" id="done-summary">—</p>
-      </div>
-      <div class="table-wrap mb-20">
-        <table><thead id="result-thead"></thead><tbody id="result-tbody"></tbody></table>
-      </div>
-      <div style="display:flex;gap:10px">
-        <button class="btn btn-primary" id="btn-download" style="flex:1">⬇ Download CSV</button>
-        <button class="btn btn-secondary" id="btn-reset">Start Over</button>
-      </div>
-    </div>
-
   </div>
-  <div class="footer">Powered by Python (pdfplumber) + Groq AI · Your documents are processed securely</div>
-</main>
+</div>
 
-<script>
+<footer>
+  <p>© 2025 DocMind · AI Agents for Finance &amp; Legal · <a href="/cdn-cgi/l/email-protection#204b53484954494a53494e474848191960474d41494c0e434f4d"><span class="__cf_email__" data-cfemail="4a213922233e23203923242d222273730a2d272b232664292527">[email&#160;protected]</span></a></p>
+</footer>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
   const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:')
     ? 'http://localhost:3001'
     : 'https://doc-parse-9k6p.onrender.com';
 
-  // ── State ──────────────────────────────────────────────────────────────────
-  let files          = [];
-  let selectedIdx    = 0;
-  let sameTemplate   = null;
-  let detectedFields = [];
-  let selectedFields = new Set();
-  let results        = [];
-  let csvData        = '';
-  // Session ID ties detect-fields → extract-fields so backend reuses the extractor
-  let sessionId      = '';
-  // Index of the file that was analyzed in Step 2 (the "preview" PDF)
-  // and the field values already extracted from it by the LLM during detect-fields.
-  // We reuse these directly for that PDF instead of calling extract-fields again.
-  let previewedFileIndex    = 0;
-  let previewExtractedValues = {};   // { "Invoice Number": "I0625...", ... }
+  const MAX_PDFS = 5;
+  const CONTACT  = 'kshitijsinghh99@gmail.com';
 
-  // ── Utilities ──────────────────────────────────────────────────────────────
+  // ── AUTH ────────────────────────────────────────────────────────────────────
+  let currentUser = null;
+
+  function getUsageKey(email) { return `dm_usage_${email}_${new Date().toISOString().split('T')[0]}`; }
+  function getUsed(email) { try { return parseInt(localStorage.getItem(getUsageKey(email)) || '0', 10); } catch { return 0; } }
+  function addUsed(email, n) { try { localStorage.setItem(getUsageKey(email), String(getUsed(email) + n)); } catch {} }
+
+  function updateQuota() {
+    if (!currentUser) return;
+    const rem = Math.max(0, MAX_PDFS - getUsed(currentUser.email));
+    document.getElementById('quota-text').textContent = `${rem} left today`;
+    for (let i = 1; i <= 5; i++) document.getElementById(`pip-${i}`).classList.toggle('used', i > rem);
+  }
+
+  function openModal() { document.getElementById('sso-modal').classList.add('active'); }
+  function closeModal() { document.getElementById('sso-modal').classList.remove('active'); }
+
+  function handleGoogleSignIn() {
+    // Redirect to backend OAuth flow — backend will redirect back with ?sso_success=1&name=...&email=...
+    window.location.href = API + '/auth/google';
+  }
+
+  // Called on page load — checks if Google redirected us back with user info
+  function checkSSOCallback() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('sso_success') === '1') {
+      const name    = params.get('name')    || 'User';
+      const email   = params.get('email')   || '';
+      const picture = params.get('picture') || '';
+      // Clean URL so a refresh doesn't re-trigger
+      window.history.replaceState({}, document.title, window.location.pathname);
+      loginUser({ name, email, picture });
+    }
+    if (params.get('error')) {
+      alert('Sign-in failed: ' + params.get('error'));
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }
+
+  function loginUser(user) {
+    currentUser = user;
+    const initial = user.name.charAt(0).toUpperCase();
+    document.getElementById('user-name').textContent    = user.name;
+    document.getElementById('user-email').textContent   = user.email;
+    const avatar = document.getElementById('user-avatar');
+    if (user.picture) {
+      avatar.innerHTML = `<img src="${user.picture}" style="width:32px;height:32px;border-radius:50%;object-fit:cover" onerror="this.replaceWith(document.createTextNode('${initial}'))">`;
+    } else {
+      avatar.textContent = initial;
+    }
+    // Hide nav CTA when logged in
+    const navBtn = document.getElementById('nav-cta-btn');
+    if (navBtn) navBtn.style.display = 'none';
+    updateQuota();
+    document.getElementById('landing-page').style.display = 'none';
+    document.getElementById('app-section').classList.add('active');
+    closeModal();
+  }
+
+  function goHome() {
+    // If logged in go to app section, otherwise show landing
+    if (currentUser) {
+      document.getElementById('landing-page').style.display = 'none';
+      document.getElementById('app-section').classList.add('active');
+    } else {
+      document.getElementById('landing-page').style.display = 'block';
+      document.getElementById('app-section').classList.remove('active');
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function handleLogout() {
+    currentUser = null;
+    const navBtn = document.getElementById('nav-cta-btn');
+    if (navBtn) navBtn.style.display = '';
+    document.getElementById('landing-page').style.display = 'block';
+    document.getElementById('app-section').classList.remove('active');
+    resetTool();
+    // Reset avatar back to letter on logout
+    document.getElementById('user-avatar').textContent = 'U';
+  }
+
+  function checkQuota(n) {
+    if (!currentUser) return false;
+    if (getUsed(currentUser.email) + n > MAX_PDFS) {
+      showError(`Oops! Your free tier is exhausted for the day. Please contact our team at ${CONTACT}`);
+      return false;
+    }
+    return true;
+  }
+
+  checkSSOCallback();
+
+  document.getElementById('sso-modal').addEventListener('click', e => { if (e.target === document.getElementById('sso-modal')) closeModal(); });
+
+  // ── TOOL STATE ──────────────────────────────────────────────────────────────
+  let files = [], selectedIdx = 0, sameTemplate = null, detectedFields = [];
+  let selectedFields = new Set(), results = [], csvData = '', sessionId = '';
+  let previewedFileIndex = 0, previewExtractedValues = {};
   const STEP_ORDER = ['upload','preview','select','extract','download'];
 
   function showView(name) {
     STEP_ORDER.forEach(v => document.getElementById(`view-${v}`).classList.add('hidden'));
     document.getElementById(`view-${name}`).classList.remove('hidden');
     document.getElementById('hero').style.display = name === 'upload' ? 'block' : 'none';
-
     const cur = STEP_ORDER.indexOf(name);
     STEP_ORDER.forEach((s, i) => {
-      const el  = document.getElementById(`step-${s}`);
-      const num = el.querySelector('.step-num');
+      const el = document.getElementById(`step-${s}`), num = el.querySelector('.step-num');
       el.className = 'step' + (i === cur ? ' active' : i < cur ? ' done' : '');
       num.textContent = i < cur ? '✓' : i + 1;
-      if (i < STEP_ORDER.length - 1)
-        document.getElementById(`line-${i+1}`).className = 'step-line' + (i < cur ? ' done' : '');
+      if (i < STEP_ORDER.length - 1) document.getElementById(`line-${i+1}`).className = 'step-line' + (i < cur ? ' done' : '');
     });
   }
 
   function showError(msg) {
     const el = document.getElementById('error-banner');
-    el.textContent = '⚠ ' + msg;
-    el.style.display = 'block';
-    setTimeout(() => el.style.display = 'none', 7000);
+    el.textContent = '⚠ ' + msg; el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 10000);
   }
 
-  function setLoading(btnId, loading, idleText) {
-    const btn = document.getElementById(btnId);
+  function setLoading(id, loading, idle) {
+    const btn = document.getElementById(id);
     btn.disabled = loading;
-    btn.innerHTML = loading ? `<span class="spinner"></span> Processing…` : idleText;
+    btn.innerHTML = loading ? '<span class="spinner"></span> Processing…' : idle;
   }
 
-  function updateModeBadge() {
-    // Badge removed — do nothing
-  }
-
-  // ── STEP 1: Upload ─────────────────────────────────────────────────────────
+  // STEP 1
   const uploadArea = document.getElementById('upload-area');
   const fileInput  = document.getElementById('file-input');
-
   uploadArea.addEventListener('click', () => fileInput.click());
   uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('drag'); });
   uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag'));
@@ -368,42 +637,28 @@
   fileInput.addEventListener('change', e => handleFiles(e.target.files));
 
   function handleFiles(rawFiles) {
-    files = Array.from(rawFiles).filter(f => f.type === 'application/pdf');
-    if (!files.length) { showError('Please upload PDF files only.'); return; }
-
-    // Update upload area to show count
+    const pdfs = Array.from(rawFiles).filter(f => f.type === 'application/pdf');
+    if (!pdfs.length) { showError('Please upload PDF files only.'); return; }
+    if (!checkQuota(pdfs.length)) return;
+    files = pdfs;
     uploadArea.innerHTML = `<div class="icon">✅</div><h3>${files.length} PDF${files.length > 1 ? 's' : ''} selected</h3><p>${files.map(f => f.name).join(', ').substring(0, 80)}${files.length > 2 ? '…' : ''}</p>`;
-
-    // Show template question (only if more than 1 PDF)
-    const tq = document.getElementById('template-question');
-    if (files.length > 1) {
-      tq.classList.remove('hidden');
-    } else {
-      // Single PDF — skip template question, no choice needed
-      sameTemplate = true;
-      proceedToPreview();
-    }
+    if (files.length > 1) { document.getElementById('template-question').classList.remove('hidden'); }
+    else { sameTemplate = true; proceedToPreview(); }
   }
 
-  function selectTemplate(choice) {
-    sameTemplate = (choice === 'same');
+  function selectTemplate(c) {
+    sameTemplate = (c === 'same');
     document.getElementById('opt-same').classList.toggle('selected', sameTemplate);
     document.getElementById('opt-diff').classList.toggle('selected', !sameTemplate);
     document.getElementById('btn-proceed').classList.remove('hidden');
   }
 
-  function proceedToPreview() {
-    selectedIdx = 0;
-    updateModeBadge();
-    renderPreview();
-    showView('preview');
-  }
+  function proceedToPreview() { selectedIdx = 0; renderPreview(); showView('preview'); }
 
-  // ── STEP 2: Preview ────────────────────────────────────────────────────────
+  // STEP 2
   function renderPreview() {
     document.getElementById('preview-title').textContent = `${files.length} PDF${files.length > 1 ? 's' : ''} Uploaded`;
-    const list = document.getElementById('file-list');
-    list.innerHTML = '';
+    const list = document.getElementById('file-list'); list.innerHTML = '';
     files.forEach((f, i) => {
       const btn = document.createElement('button');
       btn.className = 'file-item' + (i === selectedIdx ? ' selected' : '');
@@ -416,350 +671,168 @@
   }
 
   document.getElementById('btn-analyze').addEventListener('click', async () => {
-    setLoading('btn-analyze', true, '✦ Analyze with AI');
+    setLoading('btn-analyze', true, '✦ Analyse with AI');
     try {
-      // Remember which file index was analyzed
       previewedFileIndex = selectedIdx;
       sessionId = crypto.randomUUID();
-
-      const formData = new FormData();
-      formData.append('file', files[selectedIdx]);
-      formData.append('same_template', sameTemplate === true ? 'true' : 'false');
-      formData.append('session_id', sessionId);
-
-      const res  = await fetch(`${API}/api/detect-fields`, { method: 'POST', body: formData });
+      const fd = new FormData();
+      fd.append('file', files[selectedIdx]);
+      fd.append('same_template', sameTemplate === true ? 'true' : 'false');
+      fd.append('session_id', sessionId);
+      const res = await fetch(`${API}/api/detect-fields`, { method: 'POST', body: fd });
       const data = await res.json();
       if (data.detail) throw new Error(data.detail);
-
       detectedFields = data.fields;
-
-      // ── Deduplicate keys: if same key appears N times → rename key_1 … key_N ─
-      // Applied even when N=2: both get the suffix (key_1 and key_2).
-      // _origKey stores the raw label so backend receives the original label name.
-      // _occIdx is 1-based occurrence index among fields sharing the same key.
-      const keyCount = {};
+      const keyCount = {}, keyIdx = {};
       detectedFields.forEach(f => { keyCount[f.key] = (keyCount[f.key] || 0) + 1; });
-      const keyIdx = {};
       detectedFields = detectedFields.map(f => {
-        const isDup = keyCount[f.key] > 1;
-        keyIdx[f.key] = (keyIdx[f.key] || 0) + 1;
-        return {
-          ...f,
-          key:      isDup ? `${f.key}_${keyIdx[f.key]}` : f.key,
-          _origKey: f.key,           // raw label (e.g. "Bank Name")
-          _occIdx:  keyIdx[f.key],   // 1, 2, 3 …
-        };
+        const dup = keyCount[f.key] > 1; keyIdx[f.key] = (keyIdx[f.key] || 0) + 1;
+        return { ...f, key: dup ? `${f.key}_${keyIdx[f.key]}` : f.key, _origKey: f.key, _occIdx: keyIdx[f.key] };
       });
-
-      // Use deduplicated keys for the Set — no more silent deduplication by Set
       selectedFields = new Set(detectedFields.map(f => f.key));
-
-      // ── Build previewExtractedValues keyed by deduplicated display key ───────
-      // detect-fields LLM already extracted values for PDF #1 in correct order.
-      // Map the suffixed key → value so PDF #1 never needs a second API call.
       previewExtractedValues = {};
-      detectedFields.forEach(f => {
-        if (f.key && f.value !== undefined) {
-          previewExtractedValues[f.key] = f.value;
-        }
-      });
-
-      if (data.extractor_ready) {
-        console.log(`✓ Extractor generated for session ${sessionId} — PDFs #2+ use it (0 LLM calls)`);
-      }
-
-      renderFieldsGrid();
-      showView('select');
-    } catch (e) {
-      showError(e.message);
-    }
-    setLoading('btn-analyze', false, '✦ Analyze with AI');
+      detectedFields.forEach(f => { if (f.key && f.value !== undefined) previewExtractedValues[f.key] = f.value; });
+      if (data.extractor_ready) console.log(`✓ Extractor ready: ${sessionId}`);
+      renderFieldsGrid(); showView('select');
+    } catch (e) { showError(e.message); }
+    setLoading('btn-analyze', false, '✦ Analyse with AI');
   });
 
-  // ── STEP 3: Select Fields ──────────────────────────────────────────────────
+  // STEP 3
   function renderFieldsGrid() {
     document.getElementById('field-count').textContent = detectedFields.length;
-
-    // Show the right info bar
     document.getElementById('info-bar-regex').classList.toggle('hidden', sameTemplate !== true);
     document.getElementById('info-bar-llm').classList.toggle('hidden', sameTemplate !== false);
-
-    const grid = document.getElementById('fields-grid');
-    grid.innerHTML = '';
+    const grid = document.getElementById('fields-grid'); grid.innerHTML = '';
     detectedFields.forEach(f => {
-      const card = document.createElement('label');
+      const card = document.createElement('div');
       card.className = 'field-card' + (selectedFields.has(f.key) ? ' checked' : '');
-      card.innerHTML = `
-        <input type="checkbox" ${selectedFields.has(f.key) ? 'checked' : ''} data-key="${f.key}" />
-        <div style="min-width:0">
-          <div class="field-key">
-            ${f.key}
-            ${(f._origKey && f._origKey !== f.key)
-              ? `<span style="margin-left:4px;font-size:9px;font-weight:700;background:#fef3c7;color:#b45309;border-radius:4px;padding:1px 5px;vertical-align:middle">dup</span>`
-              : ''}
-          </div>
-          <div class="field-val">${f.value}</div>
-        </div>`;
-      card.querySelector('input').addEventListener('change', e => {
-        e.target.checked ? selectedFields.add(f.key) : selectedFields.delete(f.key);
-        card.classList.toggle('checked', e.target.checked);
-        updateSelectCount();
+      card.innerHTML = `<input type="checkbox" ${selectedFields.has(f.key) ? 'checked' : ''}/><div><div class="field-key">${f.key}</div><div class="field-val">${f.value ?? ''}</div></div>`;
+      card.addEventListener('click', () => {
+        if (selectedFields.has(f.key)) { selectedFields.delete(f.key); card.classList.remove('checked'); card.querySelector('input').checked = false; }
+        else { selectedFields.add(f.key); card.classList.add('checked'); card.querySelector('input').checked = true; }
+        document.getElementById('btn-extract').disabled = selectedFields.size === 0;
       });
       grid.appendChild(card);
     });
-    updateSelectCount();
-  }
-
-  function updateSelectCount() {
-    document.getElementById('select-count').textContent = `${selectedFields.size} of ${detectedFields.length} selected`;
-    const btn = document.getElementById('btn-extract');
-    btn.textContent = `✦ Extract ${selectedFields.size} field${selectedFields.size !== 1 ? 's' : ''} from all ${files.length} PDF${files.length > 1 ? 's' : ''}`;
-    btn.disabled = selectedFields.size === 0;
-  }
-
-  document.getElementById('btn-toggle-all').addEventListener('click', () => {
-    if (selectedFields.size === detectedFields.length) selectedFields.clear();
-    else detectedFields.forEach(f => selectedFields.add(f.key));
-    renderFieldsGrid();
-  });
-
-  document.getElementById('btn-add-custom').addEventListener('click', addCustom);
-  document.getElementById('custom-input').addEventListener('keydown', e => { if (e.key === 'Enter') addCustom(); });
-
-  function addCustom() {
-    const input = document.getElementById('custom-input');
-    const val = input.value.trim();
-    if (val && !detectedFields.find(f => f.key === val)) {
-      detectedFields.push({ key: val, value: 'custom field', _origKey: val, _occIdx: 1 });
-      selectedFields.add(val);
+    document.getElementById('btn-extract').disabled = selectedFields.size === 0;
+    const ab = document.getElementById('select-all-btn');
+    ab.onclick = () => {
+      const all = selectedFields.size === detectedFields.length;
+      detectedFields.forEach(f => all ? selectedFields.delete(f.key) : selectedFields.add(f.key));
+      ab.textContent = all ? 'Select all' : 'Deselect all';
       renderFieldsGrid();
-      input.value = '';
-    }
+    };
   }
 
-  // ── STEP 4: Extract ────────────────────────────────────────────────────────
+  function addCustomField() {
+    const inp = document.getElementById('custom-field-input'), val = inp.value.trim();
+    if (!val || detectedFields.find(f => f.key === val)) { inp.value = ''; return; }
+    detectedFields.push({ key: val, value: '', _origKey: val, _occIdx: 1 });
+    selectedFields.add(val); inp.value = '';
+    renderFieldsGrid();
+  }
+
+  // STEP 4
   document.getElementById('btn-extract').addEventListener('click', async () => {
     const fields = [...selectedFields];
+    if (!fields.length) return;
+    if (!checkQuota(files.length)) return;
+    setLoading('btn-extract', true, '✦ Extract fields from all PDFs');
     showView('extract');
-
-    const progressList = document.getElementById('progress-list');
-    progressList.innerHTML = '';
+    const pl = document.getElementById('progress-list'); pl.innerHTML = '';
     files.forEach((f, i) => {
-      const div = document.createElement('div');
-      div.className = 'progress-item';
-      div.innerHTML = `
-        <div class="progress-dot" id="pdot-${i}">${i + 1}</div>
-        <div style="flex:1">
-          <div style="display:flex;justify-content:space-between;margin-bottom:5px">
-            <span style="color:#475569;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px">${f.name}</span>
-            <span style="color:#94a3b8;font-size:11px;margin-left:8px;flex-shrink:0" id="pstatus-${i}">waiting</span>
-          </div>
-          <div class="progress-bar-wrap"><div class="progress-bar" id="pbar-${i}"></div></div>
-        </div>`;
-      progressList.appendChild(div);
+      const d = document.createElement('div'); d.className = 'progress-item';
+      d.innerHTML = `<div class="progress-dot" id="pdot-${i}">${i+1}</div><div style="flex:1"><div style="font-size:13px;font-weight:500;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px">${f.name}</div><div class="progress-bar-wrap"><div class="progress-bar" id="pbar-${i}"></div></div></div><span style="color:#94a3b8;font-size:11px;margin-left:8px;flex-shrink:0" id="pstatus-${i}">waiting</span>`;
+      pl.appendChild(d);
     });
-
     results = [];
-
     for (let i = 0; i < files.length; i++) {
-      const isSame = sameTemplate === true;
-      const isPreviewedFile = (i === previewedFileIndex);
-
-      // Mode label
-      let modeLabel;
-      if (isPreviewedFile) {
-        modeLabel = '🤖 LLM (preview)';
-      } else if (isSame) {
-        modeLabel = '⚡ extractor';
-      } else {
-        modeLabel = '🤖 LLM';
-      }
-
+      const isSame = sameTemplate === true, isPrev = (i === previewedFileIndex);
+      let modeLabel = isPrev ? '🤖 LLM (preview)' : isSame ? '⚡ extractor' : '🤖 LLM';
       document.getElementById(`pdot-${i}`).className = 'progress-dot processing';
-      document.getElementById(`pdot-${i}`).textContent = isPreviewedFile ? '🤖' : '⚡';
+      document.getElementById(`pdot-${i}`).textContent = isPrev ? '🤖' : '⚡';
       document.getElementById(`pstatus-${i}`).textContent = modeLabel;
       document.getElementById(`pbar-${i}`).className = 'progress-bar processing';
-      document.getElementById('extract-status').textContent =
-        `Processing ${i + 1} of ${files.length} — ${modeLabel}`;
-
+      document.getElementById('extract-status').textContent = `Processing ${i+1} of ${files.length} — ${modeLabel}`;
       try {
-        let normalizedExtracted = {};
-
-        if (isPreviewedFile) {
-          // ── PDF #1 (the one analyzed): reuse values from detect-fields ──────
-          // LLM already extracted these — no second API call needed.
-          for (const field of fields) {
-            const v = previewExtractedValues[field];
-            normalizedExtracted[field] = (v !== undefined && v !== null && String(v).trim() !== '')
-              ? String(v)
-              : 'N/A';
-          }
+        let ne = {};
+        if (isPrev) {
+          for (const field of fields) { const v = previewExtractedValues[field]; ne[field] = (v !== undefined && v !== null && String(v).trim() !== '') ? String(v) : 'N/A'; }
         } else {
-          // ── All other PDFs: call extract-fields ──────────────────────────
-          // Send ORIGINAL (un-suffixed) unique keys to the backend.
-          // e.g. ["Bank Name", "Account Number"] not ["Bank Name_1", "Bank Name_2"]
-          // Backend returns one value per original key.
-          // For _2 / _3 occurrences we find the Nth match in raw_text.
-          const origKeys = [...new Set(
-            detectedFields
-              .filter(f => selectedFields.has(f.key))
-              .map(f => f._origKey || f.key)
-          )];
-
-          // Also send table line-item fields (Header_N) as-is — resolved
-          // directly by the backend table schema, not deduplicated.
-          const tableKeys = detectedFields
-            .filter(f => selectedFields.has(f.key) && /^.+_\d+$/.test(f.key) && f._occIdx === 1)
-            .map(f => f.key);
-
+          const origKeys = [...new Set(detectedFields.filter(f => selectedFields.has(f.key)).map(f => f._origKey || f.key))];
+          const tableKeys = detectedFields.filter(f => selectedFields.has(f.key) && /^.+_\d+$/.test(f.key) && f._occIdx === 1).map(f => f.key);
           const allKeys = [...new Set([...origKeys, ...tableKeys])];
-
-          const formData = new FormData();
-          formData.append('file', files[i]);
-          formData.append('fields', JSON.stringify(allKeys));
-          formData.append('same_template', isSame ? 'true' : 'false');
-          formData.append('session_id', sessionId);
-
-          const res  = await fetch(`${API}/api/extract-fields`, { method: 'POST', body: formData });
+          const fd = new FormData();
+          fd.append('file', files[i]); fd.append('fields', JSON.stringify(allKeys));
+          fd.append('same_template', isSame ? 'true' : 'false'); fd.append('session_id', sessionId);
+          const res = await fetch(`${API}/api/extract-fields`, { method: 'POST', body: fd });
           const data = await res.json();
           if (data.detail) throw new Error(data.detail);
-
-          const rawExtracted = data.extracted || {};
-          const rawText      = data.raw_text  || '';
-
-          // Case-insensitive lookup for direct values
-          const lowerLookup = {};
-          for (const [k, v] of Object.entries(rawExtracted)) {
-            lowerLookup[k.toLowerCase().trim()] = v;
-          }
-
-          // For each selected display key (may be suffixed), resolve correct value
-          const occurrenceSeen = {};
+          const re = data.extracted || {}, rt = data.raw_text || '';
+          const ll = {}; for (const [k, v] of Object.entries(re)) ll[k.toLowerCase().trim()] = v;
           for (const field of fields) {
-            const meta     = detectedFields.find(f => f.key === field);
-            const origKey  = meta?._origKey || field;
-            const occIdx   = meta?._occIdx  || 1;
-
-            occurrenceSeen[origKey] = (occurrenceSeen[origKey] || 0) + 1;
-
-            if (occIdx === 1) {
-              // First occurrence → use direct backend value
-              normalizedExtracted[field] =
-                rawExtracted[origKey] ||
-                lowerLookup[origKey.toLowerCase().trim()] ||
-                'N/A';
-            } else {
-              // Nth occurrence → find in raw_text
-              // Strategy 1: find the Nth "Label : value" match on separate lines
-              const esc = origKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              const re  = new RegExp(`${esc}\\s*:\\s*([^\\n]+)`, 'gi');
-              let match, count = 0, found = null;
-              while ((match = re.exec(rawText)) !== null) {
-                count++;
-                if (count === occIdx) {
-                  // Strip right-column contamination: stop before the same label repeats
-                  let val = match[1].trim();
-                  // Remove anything after "   Label :" on the same match
-                  val = val.split(/\s{3,}/)[0].trim();
-                  // Also strip if "Label :" appears again inside the value (same-line dup)
-                  const innerRe = new RegExp(`\\s+${esc}\\s*:`, 'i');
-                  val = val.split(innerRe)[0].trim();
-                  found = val || null;
-                  break;
-                }
-              }
-
-              // Strategy 2 (fallback): same-line "Label : val1  Label : val2" pattern
-              if (!found) {
-                const sameLineRe = new RegExp(`${esc}\\s*:.+?${esc}\\s*:\\s*([^\\n]+)`, 'i');
-                const m2 = rawText.match(sameLineRe);
-                if (m2) found = m2[1].trim();
-              }
-
-              normalizedExtracted[field] = found || 'N/A';
+            const meta = detectedFields.find(f => f.key === field);
+            const ok = meta?._origKey || field, oi = meta?._occIdx || 1;
+            if (oi === 1) { ne[field] = re[ok] || ll[ok.toLowerCase().trim()] || 'N/A'; }
+            else {
+              const esc = ok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const rx = new RegExp(`${esc}\\s*:\\s*([^\\n]+)`, 'gi');
+              let m, c = 0, found = null;
+              while ((m = rx.exec(rt)) !== null) { c++; if (c === oi) { let v = m[1].trim(); v = v.split(/\s{3,}/)[0].trim(); v = v.split(new RegExp(`\\s+${esc}\\s*:`, 'i'))[0].trim(); found = v || null; break; } }
+              if (!found) { const m2 = rt.match(new RegExp(`${esc}\\s*:.+?${esc}\\s*:\\s*([^\\n]+)`, 'i')); if (m2) found = m2[1].trim(); }
+              ne[field] = found || 'N/A';
             }
           }
-
-          modeLabel = { 'generated_extractor': '⚡ generated', 'llm': '🤖 llm',
-                        'llm_fallback': '🤖 llm (fallback)' }[data.mode] || data.mode;
-          console.log(`PDF #${i+1} (${files[i].name}): mode=${data.mode}, session=${sessionId}`);
+          modeLabel = { 'generated_extractor': '⚡ generated', 'llm': '🤖 llm', 'llm_fallback': '🤖 llm (fallback)' }[data.mode] || data.mode;
+          console.log(`PDF #${i+1}: mode=${data.mode}`);
         }
-
-        results.push({ _filename: files[i].name, _mode: modeLabel, ...normalizedExtracted });
-      } catch (e) {
-        results.push({ _filename: files[i].name, _mode: 'error', _error: e.message });
-        showError(`Error on ${files[i].name}: ${e.message}`);
-      }
-
+        results.push({ _filename: files[i].name, _mode: modeLabel, ...ne });
+      } catch (e) { results.push({ _filename: files[i].name, _mode: 'error', _error: e.message }); showError(`Error on ${files[i].name}: ${e.message}`); }
       document.getElementById(`pdot-${i}`).className = 'progress-dot done';
       document.getElementById(`pdot-${i}`).textContent = '✓';
       document.getElementById(`pstatus-${i}`).textContent = 'done';
       document.getElementById(`pbar-${i}`).className = 'progress-bar done';
     }
-
-    // ── Clean up: drop the generated extractor from server memory ──────────
-    if (sessionId) {
-      fetch(`${API}/api/session/${sessionId}`, { method: 'DELETE' }).catch(() => {});
-      console.log(`Session ${sessionId} cleared from server memory`);
-    }
-
-    buildCSV(fields);
-    renderTable(fields);
-    showView('download');
+    addUsed(currentUser.email, files.length);
+    updateQuota();
+    if (sessionId) fetch(`${API}/api/session/${sessionId}`, { method: 'DELETE' }).catch(() => {});
+    buildCSV(fields); renderTable(fields); showView('download');
+    setLoading('btn-extract', false, '✦ Extract fields from all PDFs');
   });
 
-  // ── STEP 5: Download ───────────────────────────────────────────────────────
+  // STEP 5
   function buildCSV(fields) {
     const header = ['Filename', 'Extraction Mode', ...fields].join(',');
-    const rows   = results.map(r =>
-      [r._filename, r._mode || 'N/A', ...fields.map(f => `"${(r[f] || 'N/A').replace(/"/g, '""')}"`)] .join(',')
-    );
-    csvData = [header, ...rows].join('\n');
+    csvData = [header, ...results.map(r => [r._filename, r._mode || 'N/A', ...fields.map(f => `"${(r[f] || 'N/A').replace(/"/g, '""')}"`)] .join(','))].join('\n');
   }
-
   function renderTable(fields) {
-    const modeLabel = sameTemplate ? '⚡ generated extractor' : '🤖 LLM per PDF';
-    document.getElementById('done-summary').textContent =
-      `${results.length} document${results.length !== 1 ? 's' : ''} · ${fields.length} fields · ${modeLabel}`;
-
-    document.getElementById('result-thead').innerHTML =
-      '<tr><th>File</th><th>Mode</th>' + fields.map(f => `<th>${f}</th>`).join('') + '</tr>';
-
-    document.getElementById('result-tbody').innerHTML = results.map(r =>
-      `<tr>
-        <td class="filename">${r._filename}</td>
-        <td style="color:#64748b;font-size:11px;white-space:nowrap">${r._mode || 'N/A'}</td>
-        ${fields.map(f => `<td class="${(!r[f] || r[f] === 'N/A') ? 'na' : ''}">${r[f] || 'N/A'}</td>`).join('')}
-      </tr>`
-    ).join('');
+    document.getElementById('done-summary').textContent = `${results.length} document${results.length !== 1 ? 's' : ''} · ${fields.length} fields · ${sameTemplate ? '⚡ generated extractor' : '🤖 LLM per PDF'}`;
+    document.getElementById('result-thead').innerHTML = '<tr><th>File</th><th>Mode</th>' + fields.map(f => `<th>${f}</th>`).join('') + '</tr>';
+    document.getElementById('result-tbody').innerHTML = results.map(r => `<tr><td class="filename">${r._filename}</td><td style="color:#64748b;font-size:11px;white-space:nowrap">${r._mode||'N/A'}</td>${fields.map(f=>`<td class="${(!r[f]||r[f]==='N/A')?'na':''}">${r[f]||'N/A'}</td>`).join('')}</tr>`).join('');
   }
-
   document.getElementById('btn-download').addEventListener('click', () => {
-    const blob = new Blob([csvData], { type: 'text/csv' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href = url; a.download = 'extracted_data.csv'; a.click();
-    URL.revokeObjectURL(url);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csvData], { type: 'text/csv' }));
+    a.download = 'extracted_data.csv'; a.click();
   });
 
-  document.getElementById('btn-reset').addEventListener('click', () => {
-    // If session is still active, clean it up on the server
-    if (sessionId) {
-      fetch(`${API}/api/session/${sessionId}`, { method: 'DELETE' }).catch(() => {});
-    }
-    files = []; detectedFields = []; selectedFields.clear();
-    results = []; csvData = ''; sameTemplate = null; sessionId = '';
-    previewedFileIndex = 0; previewExtractedValues = {};
-    fileInput.value = '';
+  function resetTool() {
+    files = []; detectedFields = []; selectedFields.clear(); results = []; csvData = '';
+    sameTemplate = null; sessionId = ''; previewedFileIndex = 0; previewExtractedValues = {};
+    try { fileInput.value = ''; } catch {}
+    ['template-question','btn-proceed'].forEach(id => { const el = document.getElementById(id); if(el) el.classList.add('hidden'); });
+    ['opt-same','opt-diff'].forEach(id => { const el = document.getElementById(id); if(el) el.classList.remove('selected'); });
+    uploadArea.innerHTML = `<div class="icon">📂</div><h3>Drop PDFs here or click to browse</h3><p>Multiple files supported · PDF only</p><input type="file" id="file-input" multiple onChange="handleFiles(event.target.files)" />
+        <label for="file-input" style="cursor:pointer;color:var(--teal);font-size:13px;font-weight:600;margin-top:8px">Browse files</label>
+      </div>`;
     document.getElementById('template-question').classList.add('hidden');
     document.getElementById('btn-proceed').classList.add('hidden');
-    document.getElementById('opt-same').classList.remove('selected');
-    document.getElementById('opt-diff').classList.remove('selected');
-    uploadArea.innerHTML = `<div class="icon">📂</div><h3>Drop PDFs here or click to browse</h3><p>Multiple files supported · PDF only</p><input type="file" id="file-input" multiple accept=".pdf" />`;
-    document.getElementById('file-input').addEventListener('change', e => handleFiles(e.target.files));
-    updateModeBadge();
     showView('upload');
-  });
+  }
+
+  document.getElementById('btn-reset').addEventListener('click', resetTool);
+
 </script>
 </body>
 </html>
